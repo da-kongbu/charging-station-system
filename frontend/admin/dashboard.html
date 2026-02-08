@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理后台 - 绿能充电</title>
+    <link rel="stylesheet" href="../css/admin.css">
+</head>
+
+<body>
+    <aside class="sidebar">
+        <div class="sidebar-logo">
+            <span class="icon">⚡</span>
+            <h2>绿能充电管理</h2>
+        </div>
+        <div class="sidebar-menu">
+            <a href="dashboard.html" class="active">
+                <span class="icon">📊</span>
+                <span>仪表盘</span>
+            </a>
+            <a href="stations.html">
+                <span class="icon">🏢</span>
+                <span>充电站管理</span>
+            </a>
+            <a href="users.html">
+                <span class="icon">👥</span>
+                <span>用户管理</span>
+            </a>
+            <a href="orders.html">
+                <span class="icon">📋</span>
+                <span>订单管理</span>
+            </a>
+            <a href="#" onclick="logout()">
+                <span class="icon">🚪</span>
+                <span>退出登录</span>
+            </a>
+        </div>
+    </aside>
+
+    <main class="main-content">
+        <div class="top-bar">
+            <h1>仪表盘</h1>
+            <div>欢迎，<span id="adminName">管理员</span></div>
+        </div>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h3 id="statUsers">-</h3>
+                <p>注册用户数</p>
+            </div>
+            <div class="stat-card">
+                <h3 id="statStations">-</h3>
+                <p>充电站数量</p>
+            </div>
+            <div class="stat-card">
+                <h3 id="statReservations">-</h3>
+                <p>今日预约</p>
+            </div>
+            <div class="stat-card">
+                <h3 id="statRevenue">-</h3>
+                <p>今日收入</p>
+            </div>
+        </div>
+
+        <h2 class="mb-2">最近订单</h2>
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>订单号</th>
+                    <th>用户</th>
+                    <th>金额</th>
+                    <th>状态</th>
+                    <th>时间</th>
+                </tr>
+            </thead>
+            <tbody id="recentOrders">
+                <tr>
+                    <td colspan="5" class="text-center">加载中...</td>
+                </tr>
+            </tbody>
+        </table>
+    </main>
+
+    <script src="../js/api.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            checkAdminAuth();
+            loadDashboard();
+        });
+
+        function checkAdminAuth() {
+            const user = JSON.parse(localStorage.getItem('user') || '{}');
+            const token = localStorage.getItem('token');
+            if (!token || user.role !== 1) {
+                window.location.href = 'login.html';
+                return;
+            }
+            document.getElementById('adminName').textContent = user.username;
+        }
+
+        function logout() {
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            window.location.href = 'login.html';
+        }
+
+        async function loadDashboard() {
+            try {
+                const response = await API.request('/admin/dashboard');
+                const data = response.data;
+
+                document.getElementById('statUsers').textContent = data.totalUsers || 0;
+                document.getElementById('statStations').textContent = data.totalStations || 0;
+                document.getElementById('statReservations').textContent = data.todayReservations || 0;
+                document.getElementById('statRevenue').textContent = '¥' + (data.todayRevenue || 0);
+
+                renderRecentOrders(data.recentOrders || []);
+            } catch (error) {
+                console.error('Dashboard error:', error);
+            }
+        }
+
+        function renderRecentOrders(orders) {
+            const tbody = document.getElementById('recentOrders');
+            if (orders.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" class="text-center">暂无订单</td></tr>';
+                return;
+            }
+            tbody.innerHTML = orders.map(order => `
+                <tr>
+                    <td>${order.orderNo}</td>
+                    <td>${order.username || '-'}</td>
+                    <td>¥${order.totalAmount}</td>
+                    <td><span class="badge ${order.status === 2 ? 'badge-success' : 'badge-warning'}">${order.status === 2 ? '已支付' : '待支付'}</span></td>
+                    <td>${formatDate(order.createdAt)}</td>
+                </tr>
+            `).join('');
+        }
+
+        function formatDate(dateStr) {
+            if (!dateStr) return '-';
+            return new Date(dateStr).toLocaleString('zh-CN');
+        }
+    </script>
+</body>
+
+</html>

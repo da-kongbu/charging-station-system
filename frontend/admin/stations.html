@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>充电站管理 - 绿能充电后台</title>
+    <link rel="stylesheet" href="../css/admin.css">
+</head>
+
+<body>
+    <aside class="sidebar">
+        <div class="sidebar-logo">
+            <span class="icon">⚡</span>
+            <h2>绿能充电管理</h2>
+        </div>
+        <div class="sidebar-menu">
+            <a href="dashboard.html">
+                <span class="icon">📊</span>
+                <span>仪表盘</span>
+            </a>
+            <a href="stations.html" class="active">
+                <span class="icon">🏢</span>
+                <span>充电站管理</span>
+            </a>
+            <a href="users.html">
+                <span class="icon">👥</span>
+                <span>用户管理</span>
+            </a>
+            <a href="orders.html">
+                <span class="icon">📋</span>
+                <span>订单管理</span>
+            </a>
+            <a href="#" onclick="logout()">
+                <span class="icon">🚪</span>
+                <span>退出登录</span>
+            </a>
+        </div>
+    </aside>
+
+    <main class="main-content">
+        <div class="top-bar">
+            <h1>充电站管理</h1>
+            <button class="btn btn-primary" onclick="openAddModal()">+ 新增充电站</button>
+        </div>
+
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>名称</th>
+                    <th>地址</th>
+                    <th>充电桩数</th>
+                    <th>状态</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody id="stationList">
+                <tr>
+                    <td colspan="6" class="text-center">加载中...</td>
+                </tr>
+            </tbody>
+        </table>
+    </main>
+
+    <!-- 新增/编辑模态框 -->
+    <div id="stationModal" class="modal">
+        <div class="modal-content" style="max-width: 600px;">
+            <span class="close-btn" onclick="closeModal()">&times;</span>
+            <h2 id="modalTitle" style="margin-bottom: 20px;">新增充电站</h2>
+            <form id="stationForm">
+                <input type="hidden" name="id" id="stationId">
+                <div class="grid grid-cols-2">
+                    <div class="form-group">
+                        <label>名称 *</label>
+                        <input type="text" name="name" class="form-control" required>
+                    </div>
+                    <div class="form-group">
+                        <label>联系电话</label>
+                        <input type="text" name="contact" class="form-control">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>地址 *</label>
+                    <input type="text" name="address" class="form-control" required>
+                </div>
+                <div class="grid grid-cols-2">
+                    <div class="form-group">
+                        <label>城市</label>
+                        <input type="text" name="city" class="form-control" value="北京">
+                    </div>
+                    <div class="form-group">
+                        <label>区域</label>
+                        <input type="text" name="district" class="form-control">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>营业时间</label>
+                    <input type="text" name="businessHours" class="form-control" placeholder="例如：24小时营业">
+                </div>
+                <div class="form-group">
+                    <label>描述</label>
+                    <textarea name="description" class="form-control" rows="3"></textarea>
+                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%;">保存</button>
+            </form>
+        </div>
+    </div>
+
+    <script src="../js/api.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            checkAdminAuth();
+            loadStations();
+        });
+
+        function checkAdminAuth() {
+            const user = JSON.parse(localStorage.getItem('user') || '{}');
+            const token = localStorage.getItem('token');
+            if (!token || user.role !== 1) {
+                window.location.href = 'login.html';
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            window.location.href = 'login.html';
+        }
+
+        async function loadStations() {
+            try {
+                const response = await API.request('/admin/stations');
+                renderStations(response.data);
+            } catch (error) {
+                console.error('Load stations error:', error);
+                document.getElementById('stationList').innerHTML =
+                    '<tr><td colspan="6" class="text-center" style="color: #d63031;">加载失败: ' + error.message + '</td></tr>';
+            }
+        }
+
+        function renderStations(stations) {
+            const tbody = document.getElementById('stationList');
+            if (!stations || stations.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center">暂无数据</td></tr>';
+                return;
+            }
+            tbody.innerHTML = stations.map(s => `
+                <tr>
+                    <td>${s.id}</td>
+                    <td>${s.name}</td>
+                    <td>${s.city || ''} ${s.district || ''} ${s.address || ''}</td>
+                    <td>${s.piles ? s.piles.length : 0}</td>
+                    <td><span class="badge ${s.status === 1 ? 'badge-success' : 'badge-danger'}">${s.status === 1 ? '营业' : '停业'}</span></td>
+                    <td class="action-btns">
+                        <button class="btn btn-outline" onclick="editStation(${s.id})">编辑</button>
+                        <button class="btn btn-danger" onclick="deleteStation(${s.id})">删除</button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        function openAddModal() {
+            document.getElementById('modalTitle').textContent = '新增充电站';
+            document.getElementById('stationForm').reset();
+            document.getElementById('stationId').value = '';
+            document.getElementById('stationModal').classList.add('active');
+        }
+
+        async function editStation(id) {
+            try {
+                const response = await API.request(`/stations/${id}`);
+                const station = response.data;
+
+                document.getElementById('modalTitle').textContent = '编辑充电站';
+                document.getElementById('stationId').value = station.id;
+
+                const form = document.getElementById('stationForm');
+                form.name.value = station.name;
+                form.contact.value = station.contact || '';
+                form.address.value = station.address;
+                form.city.value = station.city || '';
+                form.district.value = station.district || '';
+                form.businessHours.value = station.businessHours || '';
+                form.description.value = station.description || '';
+
+                document.getElementById('stationModal').classList.add('active');
+            } catch (error) {
+                alert('获取数据失败: ' + error.message);
+            }
+        }
+
+        function closeModal() {
+            document.getElementById('stationModal').classList.remove('active');
+        }
+
+        document.getElementById('stationForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const data = Object.fromEntries(formData.entries());
+
+            try {
+                if (data.id) {
+                    await API.request(`/admin/stations/${data.id}`, {
+                        method: 'PUT',
+                        body: JSON.stringify(data)
+                    });
+                    alert('更新成功');
+                } else {
+                    await API.request('/admin/stations', {
+                        method: 'POST',
+                        body: JSON.stringify(data)
+                    });
+                    alert('创建成功');
+                }
+                closeModal();
+                loadStations();
+            } catch (error) {
+                alert('操作失败: ' + error.message);
+            }
+        });
+
+        async function deleteStation(id) {
+            if (!confirm('确定要删除这个充电站吗？')) return;
+            try {
+                await API.request(`/admin/stations/${id}`, { method: 'DELETE' });
+                alert('删除成功');
+                loadStations();
+            } catch (error) {
+                alert('删除失败: ' + error.message);
+            }
+        }
+    </script>
+</body>
+
+</html>
