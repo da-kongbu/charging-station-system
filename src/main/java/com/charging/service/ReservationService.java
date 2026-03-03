@@ -2,14 +2,11 @@ package com.charging.service;
 
 import com.charging.dto.ReservationDTO;
 import com.charging.dto.ReservationRequest;
-import com.charging.entity.Order;
 import com.charging.entity.ParkingSpot;
 import com.charging.entity.Reservation;
 import com.charging.entity.User;
-import com.charging.repository.OrderRepository;
 import com.charging.repository.ParkingSpotRepository;
 import com.charging.repository.ReservationRepository;
-import com.charging.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,8 +29,8 @@ public class ReservationService {
 
     private final ReservationRepository reservationRepository;
     private final ParkingSpotRepository parkingSpotRepository;
-    private final UserRepository userRepository;
-    private final OrderRepository orderRepository;
+    private final UserService userService;
+    private final OrderService orderService;
 
     public List<ReservationDTO> findByUserId(Long userId) {
         return reservationRepository.findByUserIdOrderByCreatedAtDesc(userId).stream()
@@ -58,16 +55,22 @@ public class ReservationService {
     @Transactional
     public Reservation create(Long userId, ReservationRequest request) {
         // 验证用户
-        User user = userRepository.findById(userId)
+        User user = userService.findById(userId)
                 .orElseThrow(() -> new RuntimeException("用户不存在"));
+
+        // 信用分校验
+        if (user.getCreditScore() < 60) {
+            throw new RuntimeException("信用分过低(" + user.getCreditScore() + ")，无法预约相关车位");
+        }
 
         // 使用悲观锁查询车位，防止并发预约
         ParkingSpot spot = parkingSpotRepository.findByIdForUpdate(request.getSpotId())
                 .orElseThrow(() -> new RuntimeException("车位不存在"));
 
-        // 检查车位是否可用 (status=0表示空闲)
-        if (spot.getStatus() != 0) {
-            throw new RuntimeException("该车位当前不可预约");
+        // 检查车位是否可用 (0=离线/故障，只有这种情况不能约)
+        // 1=空闲, 2=预约中, 3=使用中 (这些状态只要时间不冲突都可以约)
+        if (spot.getStatus() == 0) {
+            throw new RuntimeException("该车位处于维护或离线状态，暂停服务");
         }
 
         // 检查时间冲突
@@ -101,7 +104,13 @@ public class ReservationService {
                 .status(1) // 待使用
                 .build();
 
-        return reservationRepository.save(reservation);
+        Reservation saved = reservationRepository.save(reservation);
+
+        // 更新车位状态为 预约中 (2)
+        spot.setStatus(2);
+        parkingSpotRepository.save(spot);
+
+        return saved;
     }
 
     @Transactional
@@ -119,8 +128,20 @@ public class ReservationService {
             throw new RuntimeException("当前状态无法取消");
         }
 
+        // 违约扣分规则：如果距离开始时间不足1小时，扣10分
+        if (reservation.getStartTime().isBefore(LocalDateTime.now().plusHours(1))) {
+            userService.deductCredit(userId, 10);
+        }
+
         reservation.setStatus(0); // 已取消
-        return reservationRepository.save(reservation);
+        Reservation saved = reservationRepository.save(reservation);
+
+        // 更新车位状态为 空闲 (1)
+        ParkingSpot spot = reservation.getSpot();
+        spot.setStatus(1);
+        parkingSpotRepository.save(spot);
+
+        return saved;
     }
 
     @Transactional
@@ -162,58 +183,10 @@ public class ReservationService {
 
         Reservation saved = reservationRepository.save(reservation);
 
-        // 自动创建订单
-        createOrderFromReservation(saved);
+        // 自动创建订单 (调用订单服务，内含计费逻辑)
+        orderService.createFromReservation(saved.getId());
 
         return saved;
-    }
-
-    private void createOrderFromReservation(Reservation reservation) {
-        // 检查是否已有订单
-        Optional<Order> existingOrder = orderRepository.findByReservationId(reservation.getId());
-        if (existingOrder.isPresent()) {
-            return; // 已存在订单，跳过
-        }
-
-        ParkingSpot spot = reservation.getSpot();
-
-        // 计算费用
-        LocalDateTime start = reservation.getActualArrivalTime() != null
-                ? reservation.getActualArrivalTime()
-                : reservation.getStartTime();
-        LocalDateTime end = reservation.getActualLeaveTime() != null
-                ? reservation.getActualLeaveTime()
-                : reservation.getEndTime();
-
-        long minutes = Duration.between(start, end).toMinutes();
-        long hours = (minutes + 59) / 60; // 向上取整到小时
-        if (hours < 1)
-            hours = 1;
-
-        BigDecimal parkingFee = spot.getPricePerHour() != null
-                ? spot.getPricePerHour().multiply(BigDecimal.valueOf(hours))
-                : BigDecimal.ZERO;
-
-        BigDecimal serviceFee = spot.getServiceFee() != null ? spot.getServiceFee() : BigDecimal.ZERO;
-        BigDecimal totalAmount = parkingFee.add(serviceFee);
-
-        // 生成订单号
-        String orderNo = "ORD" + System.currentTimeMillis() +
-                String.format("%04d", (int) (Math.random() * 10000));
-
-        Order order = Order.builder()
-                .orderNo(orderNo)
-                .user(reservation.getUser())
-                .reservation(reservation)
-                .parkingFee(parkingFee)
-                .chargingFee(BigDecimal.ZERO)
-                .serviceFee(serviceFee)
-                .totalAmount(totalAmount)
-                .paymentStatus(0)
-                .status(1) // 待支付
-                .build();
-
-        orderRepository.save(order);
     }
 
     private ReservationDTO convertToDTO(Reservation reservation) {

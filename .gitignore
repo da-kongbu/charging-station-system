@@ -29,3 +29,6 @@ yarn-error.log*
 
 # H2 Database
 data/
+# Secrets
+application-secret.yml
+src/main/resources/application-secret.yml

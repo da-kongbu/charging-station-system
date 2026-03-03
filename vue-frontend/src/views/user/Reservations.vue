@@ -1,10 +1,25 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import Header from '@/components/common/Header.vue'
+import ChargingMonitor from '@/components/ChargingMonitor.vue'
 import { reservationApi } from '@/api'
 
 const reservations = ref([])
 const loading = ref(true)
+const showMonitor = ref(false)
+const monitorReservationId = ref(0)
+
+// Toast通知
+const toast = ref({ show: false, message: '', type: 'success' })
+let toastTimer = null
+
+function showToast(message, type = 'success') {
+  if (toastTimer) clearTimeout(toastTimer)
+  toast.value = { show: true, message, type }
+  toastTimer = setTimeout(() => {
+    toast.value.show = false
+  }, 3000)
+}
 
 onMounted(async () => {
   await loadReservations()
@@ -26,10 +41,10 @@ async function handleCheckIn(id) {
   if (!confirm('确认签到？')) return
   try {
     await reservationApi.checkIn(id)
-    alert('签到成功！')
     await loadReservations()
+    showToast('✅ 签到成功！开始充电吧', 'success')
   } catch (error) {
-    alert(error.response?.data?.message || '签到失败')
+    showToast(error.response?.data?.message || '签到失败', 'error')
   }
 }
 
@@ -37,10 +52,10 @@ async function handleCheckOut(id) {
   if (!confirm('确认结束充电？将生成订单。')) return
   try {
     await reservationApi.checkOut(id)
-    alert('结束成功，请前往订单页面支付！')
     await loadReservations()
+    showToast('✅ 充电结束！请前往订单页面支付', 'success')
   } catch (error) {
-    alert(error.response?.data?.message || '操作失败')
+    showToast(error.response?.data?.message || '操作失败', 'error')
   }
 }
 
@@ -48,10 +63,10 @@ async function handleCancel(id) {
   if (!confirm('确认取消预约？')) return
   try {
     await reservationApi.cancel(id)
-    alert('已取消预约')
     await loadReservations()
+    showToast('预约已取消', 'success')
   } catch (error) {
-    alert(error.response?.data?.message || '取消失败')
+    showToast(error.response?.data?.message || '取消失败', 'error')
   }
 }
 
@@ -68,6 +83,11 @@ function getStatusInfo(status) {
 function formatDate(str) {
   if (!str) return '-'
   return new Date(str).toLocaleString('zh-CN')
+}
+
+function openMonitor(id) {
+  monitorReservationId.value = id
+  showMonitor.value = true
 }
 </script>
 
@@ -104,14 +124,29 @@ function formatDate(str) {
             <p><strong>预估费用：</strong>¥{{ r.estimatedCost || 0 }}</p>
           </div>
 
+
           <div class="reservation-actions">
             <button v-if="r.status === 1" class="btn btn-primary btn-sm" @click="handleCheckIn(r.id)">签到</button>
+            <button v-if="r.status === 2" class="btn btn-info btn-sm" @click="openMonitor(r.id)">⚡️ 监控</button>
             <button v-if="r.status === 2" class="btn btn-primary btn-sm" @click="handleCheckOut(r.id)">结束充电</button>
             <button v-if="r.status === 1" class="btn btn-danger btn-sm" @click="handleCancel(r.id)">取消</button>
           </div>
         </div>
       </div>
     </main>
+
+    <ChargingMonitor 
+      :visible="showMonitor" 
+      :reservation-id="monitorReservationId"
+      @close="showMonitor = false" 
+    />
+
+    <!-- Toast通知 -->
+    <Transition name="toast">
+      <div v-if="toast.show" class="toast" :class="toast.type">
+        {{ toast.message }}
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -168,5 +203,39 @@ function formatDate(str) {
   margin-top: 15px;
   padding-top: 15px;
   border-top: 1px solid #eee;
+}
+
+/* Toast Notification */
+.toast {
+  position: fixed;
+  top: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-weight: 500;
+  z-index: 9999;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.toast.success {
+  background: linear-gradient(135deg, #00b894, #00cec9);
+  color: white;
+}
+
+.toast.error {
+  background: linear-gradient(135deg, #d63031, #e74c3c);
+  color: white;
+}
+
+.toast-enter-active,
+.toast-leave-active {
+  transition: all 0.3s ease;
+}
+
+.toast-enter-from,
+.toast-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(-20px);
 }
 </style>

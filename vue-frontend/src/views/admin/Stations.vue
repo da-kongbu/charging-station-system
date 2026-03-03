@@ -1,7 +1,8 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, nextTick } from 'vue'
 import Sidebar from '@/components/admin/Sidebar.vue'
 import { adminApi } from '@/api'
+import { useBaiduMap } from '@/composables/useBaiduMap'
 
 const stations = ref([])
 const loading = ref(true)
@@ -12,6 +13,10 @@ const editingId = ref(null)
 const selectedStation = ref(null)
 const selectedPile = ref(null)
 
+// 地图相关
+const { initMap, mapInstance, loadBMapScript } = useBaiduMap('station-map-picker')
+const mapMarker = ref(null)
+
 const stationForm = ref({
   name: '',
   address: '',
@@ -19,6 +24,8 @@ const stationForm = ref({
   district: '',
   contact: '',
   businessHours: '24小时营业',
+  longitude: null,
+  latitude: null,
 })
 
 const pileForm = ref({
@@ -54,17 +61,112 @@ async function loadStations() {
   }
 }
 
+// 初始化地图选择器
+async function initMapPicker() {
+  try {
+    // 确保脚本已加载
+    const BMapGL = await loadBMapScript()
+    
+    // 默认中心点
+    let centerLng = stationForm.value.longitude || 116.404
+    let centerLat = stationForm.value.latitude || 39.915
+    
+    // 初始化地图
+    const map = await initMap({ lng: centerLng, lat: centerLat }, 13)
+    if (!map) return
+
+    map.enableScrollWheelZoom(true)
+    // BMapGL 的控件添加方式
+    map.addControl(new BMapGL.ScaleControl())
+    map.addControl(new BMapGL.ZoomControl())
+
+    // 如果已有坐标，显示标记
+    if (stationForm.value.longitude && stationForm.value.latitude) {
+      addMarker(stationForm.value.longitude, stationForm.value.latitude)
+    }
+    
+    // 点击地图设置位置
+    map.addEventListener('click', function(e) {
+      // BMapGL 事件对象通常包含 latlng 或 point
+      const pt = e.latlng || e.point
+      if (!pt) return
+      
+      const lng = pt.lng
+      const lat = pt.lat
+      stationForm.value.longitude = lng
+      stationForm.value.latitude = lat
+      addMarker(lng, lat)
+      
+      // 使用逆地理编码获取地址
+      const geoc = new BMapGL.Geocoder()
+      geoc.getLocation(pt, function(result) {
+        if (result) {
+          stationForm.value.address = result.address
+          if (result.addressComponents) {
+            stationForm.value.city = result.addressComponents.city || stationForm.value.city
+            stationForm.value.district = result.addressComponents.district || ''
+          }
+        }
+      })
+    })
+  } catch (error) {
+    console.error('Map init error:', error)
+  }
+}
+
+function addMarker(lng, lat) {
+  if (!mapInstance.value || typeof window.BMapGL === 'undefined') return
+  const BMapGL = window.BMapGL
+
+  // 移除旧标记
+  if (mapMarker.value) {
+    mapInstance.value.removeOverlay(mapMarker.value)
+  }
+  
+  const pt = new BMapGL.Point(lng, lat)
+  mapMarker.value = new BMapGL.Marker(pt)
+  mapInstance.value.addOverlay(mapMarker.value)
+  mapInstance.value.panTo(pt)
+}
+
+// 地址搜索
+async function searchAddress() {
+  if (!mapInstance.value || !stationForm.value.address) return
+  const BMapGL = window.BMapGL
+  
+  const local = new BMapGL.LocalSearch(mapInstance.value, {
+    onSearchComplete: function(results) {
+      // BMapGL 的状态码检查可能无需 window.BMAP_STATUS_SUCCESS，直接判断 results
+      if (results && results.getNumPois() > 0) {
+        const poi = results.getPoi(0)
+        stationForm.value.longitude = poi.point.lng
+        stationForm.value.latitude = poi.point.lat
+        addMarker(poi.point.lng, poi.point.lat)
+        mapInstance.value.centerAndZoom(poi.point, 15)
+      }
+    }
+  })
+  local.search(stationForm.value.address)
+}
+
 // Station CRUD
 function openAddStationModal() {
   editingId.value = null
-  stationForm.value = { name: '', address: '', city: '北京', district: '', contact: '', businessHours: '24小时营业' }
+  stationForm.value = { name: '', address: '', city: '北京', district: '', contact: '', businessHours: '24小时营业', longitude: null, latitude: null }
   showStationModal.value = true
+  nextTick(() => {
+    // 延迟初始化地图，确保DOM已渲染
+    setTimeout(initMapPicker, 200)
+  })
 }
 
 function openEditStationModal(station) {
   editingId.value = station.id
   stationForm.value = { ...station }
   showStationModal.value = true
+  nextTick(() => {
+    setTimeout(initMapPicker, 200)
+  })
 }
 
 async function handleStationSubmit() {
@@ -200,7 +302,7 @@ async function handleSpotSubmit() {
 
     <!-- Station Modal -->
     <div v-if="showStationModal" class="modal-overlay" @click.self="showStationModal = false">
-      <div class="modal-content card">
+      <div class="modal-content modal-large card">
         <h2>{{ editingId ? '编辑充电站' : '新增充电站' }}</h2>
         <form @submit.prevent="handleStationSubmit">
           <div class="grid grid-2">
@@ -214,8 +316,11 @@ async function handleSpotSubmit() {
             </div>
           </div>
           <div class="form-group">
-            <label>地址 *</label>
-            <input v-model="stationForm.address" type="text" class="form-control" required />
+            <label>地址 * <small>(输入后点击搜索，或直接在地图上点击选择位置)</small></label>
+            <div class="address-search">
+              <input v-model="stationForm.address" type="text" class="form-control" placeholder="输入地址搜索..." required />
+              <button type="button" class="btn btn-outline" @click="searchAddress">🔍 搜索</button>
+            </div>
           </div>
           <div class="grid grid-2">
             <div class="form-group">
@@ -227,9 +332,19 @@ async function handleSpotSubmit() {
               <input v-model="stationForm.district" type="text" class="form-control" />
             </div>
           </div>
+          
+          <!-- 地图选择器 -->
+          <div class="form-group">
+            <label>📍 位置选择 <small>(点击地图标记充电站位置)</small></label>
+            <div id="station-map-picker" class="map-picker"></div>
+            <div v-if="stationForm.longitude" class="coordinates-display">
+              经度: {{ stationForm.longitude?.toFixed(6) }} | 纬度: {{ stationForm.latitude?.toFixed(6) }}
+            </div>
+          </div>
+          
           <div class="modal-actions">
             <button type="button" class="btn btn-outline" @click="showStationModal = false">取消</button>
-            <button type="submit" class="btn btn-primary">保存</button>
+            <button type="submit" class="btn btn-primary" :disabled="!stationForm.longitude">保存</button>
           </div>
         </form>
       </div>
@@ -450,5 +565,43 @@ async function handleSpotSubmit() {
 
 .modal-actions button {
   flex: 1;
+}
+
+/* Map Picker Styles */
+.modal-large {
+  max-width: 700px !important;
+}
+
+.address-search {
+  display: flex;
+  gap: 10px;
+}
+
+.address-search .form-control {
+  flex: 1;
+}
+
+.map-picker {
+  width: 100%;
+  height: 300px;
+  border-radius: 8px;
+  border: 2px solid #e0e0e0;
+  margin-top: 10px;
+  overflow: hidden;
+}
+
+.coordinates-display {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: #f0f9f4;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  color: #00b894;
+  font-family: monospace;
+}
+
+label small {
+  color: var(--text-light);
+  font-weight: normal;
 }
 </style>

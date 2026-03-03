@@ -64,6 +64,8 @@ public class SecurityConfig {
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers("/api/stations/**").permitAll()
                         .requestMatchers("/api/public/**").permitAll()
+                        // WebSocket
+                        .requestMatchers("/ws/**").permitAll()
                         // Swagger UI
                         .requestMatchers("/swagger-ui/**", "/api-docs/**", "/swagger-ui.html").permitAll()
                         // H2 控制台

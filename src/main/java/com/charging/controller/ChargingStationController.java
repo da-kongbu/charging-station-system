@@ -5,8 +5,8 @@ import com.charging.dto.ChargingStationDTO;
 import com.charging.entity.ChargingPile;
 import com.charging.entity.ChargingStation;
 import com.charging.entity.ParkingSpot;
-import com.charging.repository.ParkingSpotRepository;
 import com.charging.service.ChargingStationService;
+import com.charging.service.ParkingSpotService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -26,7 +26,7 @@ import java.util.List;
 public class ChargingStationController {
 
     private final ChargingStationService stationService;
-    private final ParkingSpotRepository parkingSpotRepository;
+    private final ParkingSpotService parkingSpotService;
 
     @GetMapping
     @Operation(summary = "获取所有充电站列表")
@@ -69,7 +69,7 @@ public class ChargingStationController {
     @GetMapping("/{id}/spots")
     @Operation(summary = "获取充电站的可用车位")
     public ResponseEntity<ApiResponse<List<ParkingSpot>>> getAvailableSpots(@PathVariable(name = "id") Long id) {
-        List<ParkingSpot> spots = parkingSpotRepository.findAvailableByStationId(id);
+        List<ParkingSpot> spots = parkingSpotService.findAvailableByStationId(id);
         return ResponseEntity.ok(ApiResponse.success(spots));
     }
 
@@ -78,7 +78,7 @@ public class ChargingStationController {
     public ResponseEntity<ApiResponse<List<ParkingSpot>>> getAvailableSpotsForTime(
             @RequestParam(name = "startTime") LocalDateTime startTime,
             @RequestParam(name = "endTime") LocalDateTime endTime) {
-        List<ParkingSpot> spots = parkingSpotRepository.findAvailableSpots(startTime, endTime);
+        List<ParkingSpot> spots = parkingSpotService.findAvailableSpotsForTime(startTime, endTime);
         return ResponseEntity.ok(ApiResponse.success(spots));
     }
 }

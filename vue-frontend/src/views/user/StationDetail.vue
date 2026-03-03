@@ -20,6 +20,54 @@ const reservationForm = ref({
   endTime: ''
 })
 
+const estimatedPrice = ref(0)
+const pricingRules = [
+  { time: '08:00-10:00', rate: '1.5倍', label: '早高峰' },
+  { time: '17:00-21:00', rate: '1.5倍', label: '晚高峰' },
+  { time: '23:00-07:00', rate: '0.5倍', label: '谷电优惠' },
+  { time: '其他时段', rate: '1.0倍', label: '平峰' }
+]
+
+watch(() => reservationForm.value, calculateEstimate, { deep: true })
+
+function calculateEstimate() {
+  if (!reservationForm.value.startTime || !reservationForm.value.endTime || !selectedSpot.value) {
+    estimatedPrice.value = 0
+    return
+  }
+
+  const start = new Date(reservationForm.value.startTime)
+  const end = new Date(reservationForm.value.endTime)
+  if (start >= end) {
+    estimatedPrice.value = 0
+    return
+  }
+
+  const pricePerHour = selectedSpot.value.pricePerHour
+  const pricePerMinute = pricePerHour / 60
+  let total = 0
+  let current = new Date(start)
+
+  while (current < end) {
+    const hour = current.getHours()
+    let multiplier = 1.0
+
+    if ((hour >= 8 && hour < 10) || (hour >= 17 && hour < 21)) {
+      multiplier = 1.5
+    } else if (hour >= 23 || hour < 7) {
+      multiplier = 0.5
+    }
+
+    total += pricePerMinute * multiplier
+    current.setMinutes(current.getMinutes() + 1)
+  }
+  
+  // Minimum 1 hour base price
+  if (total < pricePerHour) total = pricePerHour
+  
+  estimatedPrice.value = total.toFixed(2)
+}
+
 const selectedDate = ref(new Date().toISOString().slice(0, 10))
 const occupiedSlots = ref([])
 
@@ -62,20 +110,27 @@ function openBookingModal(spot) {
   selectedSpot.value = spot
   showModal.value = true
   
-  // Set default times
+  // Set default times - 开始时间为当前时间，结束时间为2小时后
   const now = new Date()
-  const start = new Date(now.getTime() + 30 * 60000)
-  const end = new Date(start.getTime() + 2 * 60 * 60000)
+  // 取整到5分钟
+  now.setMinutes(Math.ceil(now.getMinutes() / 5) * 5, 0, 0)
+  const end = new Date(now.getTime() + 2 * 60 * 60000) // 2小时后
   
-  reservationForm.value.startTime = formatDateTimeLocal(start)
+  reservationForm.value.startTime = formatDateTimeLocal(now)
   reservationForm.value.endTime = formatDateTimeLocal(end)
-  selectedDate.value = formatDateTimeLocal(start).slice(0, 10)
+  selectedDate.value = formatDateTimeLocal(now).slice(0, 10)
   
   loadOccupiedSlots(spot.id, selectedDate.value)
 }
 
 function formatDateTimeLocal(date) {
-  return date.toISOString().slice(0, 16)
+  // 使用本地时间格式，而不是UTC
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  const hours = String(date.getHours()).padStart(2, '0')
+  const minutes = String(date.getMinutes()).padStart(2, '0')
+  return `${year}-${month}-${day}T${hours}:${minutes}`
 }
 
 async function submitReservation() {
@@ -107,30 +162,47 @@ async function submitReservation() {
 
 function getSpotStatus(status) {
   const statusMap = {
-    0: { text: '空闲', class: 'badge-success' },
-    1: { text: '占用', class: 'badge-danger' },
+    0: { text: '离线', class: 'badge-secondary' },
+    1: { text: '空闲', class: 'badge-success' },
     2: { text: '预约中', class: 'badge-warning' },
-    3: { text: '使用中', class: 'badge-info' }
+    3: { text: '使用中', class: 'badge-danger' }
   }
   return statusMap[status] || { text: '未知', class: '' }
 }
 
 function getSegmentStyle(slot) {
-  const start = new Date(slot.startTime)
-  const end = new Date(slot.endTime)
-  const dayStart = new Date(start)
-  dayStart.setHours(0, 0, 0, 0)
-  
-  const totalMinutes = 24 * 60
-  const startMinutes = (start - dayStart) / 60000
-  const durationMinutes = (end - start) / 60000
-  
-  const left = (startMinutes / totalMinutes) * 100
-  const width = (durationMinutes / totalMinutes) * 100
+  // 1. 解析当前查看日期的 0点 和 24点
+  // 假设 selectedDate 是 "2026-02-09"
+  const viewDate = new Date(selectedDate.value)
+  const dayStart = new Date(viewDate).setHours(0, 0, 0, 0)
+  const dayEnd = new Date(viewDate).setHours(24, 0, 0, 0)
+
+  // 2. 解析预约的开始和结束时间
+  const resStart = new Date(slot.startTime).getTime()
+  const resEnd = new Date(slot.endTime).getTime()
+
+  // 3. 【核心修复逻辑】：计算“有效”的显示区间
+  // 如果预约在当天之前就结束了，或者在当天之后才开始，直接隐藏
+  if (resEnd <= dayStart || resStart >= dayEnd) {
+    return { display: 'none' }
+  }
+
+  // 裁剪时间：开始时间不能早于0点，结束时间不能晚于24点
+  const effectiveStart = Math.max(resStart, dayStart)
+  const effectiveEnd = Math.min(resEnd, dayEnd)
+
+  // 4. 计算百分比
+  const totalDayMillis = 24 * 60 * 60 * 1000 // 一天的毫秒数
+
+  // Left = (有效开始时间 - 0点) / 一天总时间
+  const leftPercent = ((effectiveStart - dayStart) / totalDayMillis) * 100
+
+  // Width = (有效结束时间 - 有效开始时间) / 一天总时间
+  const widthPercent = ((effectiveEnd - effectiveStart) / totalDayMillis) * 100
   
   return {
-    left: `${left}%`,
-    width: `${width}%`
+    left: `${leftPercent}%`,
+    width: `${widthPercent}%`
   }
 }
 </script>
@@ -171,8 +243,12 @@ function getSegmentStyle(slot) {
               v-for="spot in pile.parkingSpots" 
               :key="spot.id" 
               class="spot-item"
-              :class="{ available: spot.status === 0 }"
-              @click="spot.status === 0 && openBookingModal(spot)"
+              :class="{ 
+                'available': spot.status === 1,
+                'occupied': spot.status === 2 || spot.status === 3,
+                'offline': spot.status === 0
+              }"
+              @click="spot.status !== 0 && openBookingModal(spot)"
             >
               <span class="spot-no">{{ spot.spotCode }}</span>
               <span class="badge" :class="getSpotStatus(spot.status).class">
@@ -200,8 +276,9 @@ function getSegmentStyle(slot) {
                   v-for="slot in occupiedSlots" 
                   :key="slot.id"
                   class="occupied-segment"
+                  :class="'segment-status-' + slot.status"
                   :style="getSegmentStyle(slot)"
-                  :title="`${slot.startTime.slice(11,16)} - ${slot.endTime.slice(11,16)} 已占用`"
+                  :title="`${slot.startTime.slice(11,16)} - ${slot.endTime.slice(11,16)} [${getSpotStatus(slot.status).text}]`"
                 ></div>
               </div>
               <div class="timeline-labels">
@@ -223,6 +300,21 @@ function getSegmentStyle(slot) {
             <label>结束时间</label>
             <input v-model="reservationForm.endTime" type="datetime-local" class="form-control" required />
             <small class="text-hint">注意：单次预约最长不超过12小时</small>
+          </div>
+
+          <div class="pricing-info">
+            <div class="price-estimate">
+              <span>预估费用：</span>
+              <span class="price-value">¥{{ estimatedPrice }}</span>
+            </div>
+            <div class="pricing-rules">
+              <p>计费规则：基础价 ¥{{ selectedSpot?.pricePerHour }}/小时</p>
+              <ul>
+                <li v-for="(rule, index) in pricingRules" :key="index">
+                   {{ rule.label }} ({{ rule.time }}): {{ rule.rate }}
+                </li>
+              </ul>
+            </div>
           </div>
           <div class="modal-actions">
             <button type="button" class="btn btn-outline" @click="showModal = false">取消</button>
@@ -327,6 +419,22 @@ function getSegmentStyle(slot) {
   color: white;
 }
 
+.spot-item.occupied {
+  cursor: pointer;
+  border: 1px solid #ffc107;
+  background: #fffdf5;
+}
+
+.spot-item.occupied:hover {
+  background: #ffe58f;
+}
+
+.spot-item.offline {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background: #e9ecef;
+}
+
 .spot-no {
   font-weight: 600;
   font-size: 1.1rem;
@@ -400,8 +508,21 @@ function getSegmentStyle(slot) {
   position: absolute;
   top: 0;
   bottom: 0;
-  background-color: #ff4d4f;
   opacity: 0.8;
+  border-right: 1px solid rgba(255,255,255,0.3);
+}
+
+.segment-status-1 { /* 待使用/预约中 */
+  background-color: #faad14; 
+}
+.segment-status-2 { /* 占用/进行中 */
+  background-color: #ff4d4f;
+}
+.segment-status-3 { /* 已完成 */
+  background-color: #d9d9d9;
+}
+.segment-status-0 { /* 已取消/离线 */
+  background-color: #8c8c8c;
 }
 
 .timeline-labels {
@@ -416,5 +537,35 @@ function getSegmentStyle(slot) {
   font-size: 0.85em;
   margin-top: 4px;
   display: block;
+}
+
+.pricing-info {
+  margin-top: 15px;
+  background: #f8f9fa;
+  padding: 10px;
+  border-radius: 6px;
+}
+
+.price-estimate {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-weight: bold;
+}
+
+.price-value {
+  color: var(--primary);
+  font-size: 1.2rem;
+}
+
+.pricing-rules {
+  font-size: 0.85rem;
+  color: #666;
+}
+
+.pricing-rules ul {
+  padding-left: 20px;
+  margin: 5px 0 0;
 }
 </style>

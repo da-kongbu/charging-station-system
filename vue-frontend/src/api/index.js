@@ -1,6 +1,6 @@
 import axios from 'axios'
-import { useAuthStore } from '@/stores/auth'
-import router from '@/router'
+// import { useAuthStore } from '@/stores/auth' // Removed to avoid circular dependency
+// import router from '@/router' // Removed to avoid circular dependency
 
 const api = axios.create({
     baseURL: 'http://localhost:8080/api',
@@ -27,13 +27,16 @@ api.interceptors.response.use(
     response => response,
     error => {
         if (error.response?.status === 401) {
-            const authStore = useAuthStore()
-            authStore.logout()
+            // Manually clear storage instead of using store action to avoid circular dependency
+            localStorage.removeItem('token')
+            localStorage.removeItem('user')
 
+            // Break circular dependency by using window.location or dynamic import
+            // Since we are logging out, a full reload is safer/cleaner anyway
             if (window.location.pathname.startsWith('/admin')) {
-                router.push('/admin/login')
+                window.location.href = '/admin/login'
             } else {
-                router.push('/login')
+                window.location.href = '/login'
             }
         }
         return Promise.reject(error)

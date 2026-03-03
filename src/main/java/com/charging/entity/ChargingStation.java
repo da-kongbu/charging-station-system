@@ -45,7 +45,7 @@ public class ChargingStation {
     @Column(precision = 10, scale = 7)
     private BigDecimal latitude;
 
-    @Column(length = 20)
+    @Column(length = 50)
     private String contact;
 
     /**

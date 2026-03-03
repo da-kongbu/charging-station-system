@@ -10,7 +10,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -25,6 +24,7 @@ public class OrderService {
 
     private final OrderRepository orderRepository;
     private final ReservationRepository reservationRepository;
+    private final NotificationService notificationService;
 
     public List<Order> findAll() {
         return orderRepository.findAll();
@@ -63,14 +63,8 @@ public class OrderService {
                 ? reservation.getActualLeaveTime()
                 : reservation.getEndTime();
 
-        long minutes = Duration.between(start, end).toMinutes();
-        long hours = (minutes + 59) / 60; // 向上取整到小时
-        if (hours < 1)
-            hours = 1;
-
-        BigDecimal parkingFee = spot.getPricePerHour() != null
-                ? spot.getPricePerHour().multiply(BigDecimal.valueOf(hours))
-                : BigDecimal.ZERO;
+        // 动态计费计算
+        BigDecimal parkingFee = calculateDynamicFee(start, end, spot.getPricePerHour());
 
         BigDecimal serviceFee = spot.getServiceFee() != null ? spot.getServiceFee() : BigDecimal.ZERO;
         BigDecimal totalAmount = parkingFee.add(serviceFee);
@@ -103,10 +97,18 @@ public class OrderService {
             throw new RuntimeException("订单已支付");
         }
 
+        // 模拟支付逻辑及回调
+
         order.setPaymentMethod(paymentMethod);
         order.setPaymentStatus(1);
         order.setPaymentTime(LocalDateTime.now());
         order.setStatus(2); // 已支付
+
+        // 发送通知
+        if (order.getUser() != null) {
+            notificationService.sendSms(order.getUser().getPhone(), "订单 " + order.getOrderNo() + " 支付成功");
+            notificationService.sendEmail(order.getUser().getEmail(), "支付成功通知", "您的订单已支付完成。");
+        }
 
         return orderRepository.save(order);
     }
@@ -144,5 +146,45 @@ public class OrderService {
     public BigDecimal calculateRevenue(LocalDateTime start, LocalDateTime end) {
         BigDecimal revenue = orderRepository.sumRevenueBetween(start, end);
         return revenue != null ? revenue : BigDecimal.ZERO;
+    }
+
+    /**
+     * 计算动态停车费用
+     * 峰期 (08:00-10:00, 17:00-21:00): 1.5倍
+     * 谷期 (23:00-07:00): 0.5倍
+     * 平期 (其他): 1.0倍
+     */
+    private BigDecimal calculateDynamicFee(LocalDateTime start, LocalDateTime end, BigDecimal pricePerHour) {
+        if (pricePerHour == null || start.isAfter(end)) {
+            return BigDecimal.ZERO;
+        }
+
+        BigDecimal totalFee = BigDecimal.ZERO;
+        BigDecimal pricePerMinute = pricePerHour.divide(BigDecimal.valueOf(60), 4, java.math.RoundingMode.HALF_UP);
+
+        LocalDateTime current = start;
+        while (current.isBefore(end)) {
+            int hour = current.getHour();
+            BigDecimal multiplier = BigDecimal.ONE;
+
+            // 峰期
+            if ((hour >= 8 && hour < 10) || (hour >= 17 && hour < 21)) {
+                multiplier = BigDecimal.valueOf(1.5);
+            }
+            // 谷期
+            else if (hour >= 23 || hour < 7) {
+                multiplier = BigDecimal.valueOf(0.5);
+            }
+
+            totalFee = totalFee.add(pricePerMinute.multiply(multiplier));
+            current = current.plusMinutes(1);
+        }
+
+        // 最低收费（至少1小时平期价格）
+        if (totalFee.compareTo(pricePerHour) < 0) {
+            return pricePerHour;
+        }
+
+        return totalFee.setScale(2, java.math.RoundingMode.HALF_UP);
     }
 }
