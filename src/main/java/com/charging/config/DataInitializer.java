@@ -10,14 +10,12 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
-import java.util.UUID;
 
 /**
  * 数据初始化组件 - 增强版
@@ -70,7 +68,7 @@ public class DataInitializer implements CommandLineRunner {
                                 .build();
                 userRepository.save(admin);
 
-                // 创建普通用户 (用于模拟预约)
+                // 创建普通测试用户（干净账号，无模拟数据）
                 User user = User.builder()
                                 .username("user")
                                 .password(passwordEncoder.encode("user123"))
@@ -83,7 +81,17 @@ public class DataInitializer implements CommandLineRunner {
                                 .build();
                 userRepository.save(user);
 
-                return user; // 返回普通用户用于生成预约数据
+                // 创建隐藏的系统用户（专门用于挂载模拟预约数据，role=-1不可登录）
+                User systemUser = User.builder()
+                                .username("_system")
+                                .password(passwordEncoder.encode("SYSTEM_NO_LOGIN"))
+                                .realName("系统模拟用户")
+                                .role(-1)
+                                .status(0)
+                                .build();
+                userRepository.save(systemUser);
+
+                return systemUser; // 返回系统用户用于生成模拟预约数据
         }
 
         private void initStationData(User mockUser) {
@@ -142,12 +150,17 @@ public class DataInitializer implements CommandLineRunner {
                 // 生成车位编号: CP-001-A
                 String spotNo = pile.getPileCode() + "-" + (char) ('A' + index - 1);
 
+                // 根据充电桩类型差异化定价
+                boolean isFast = "DC_FAST".equals(pile.getPileType());
+                BigDecimal hourlyRate = isFast ? new BigDecimal("1.5") : new BigDecimal("0.5");
+                BigDecimal electricityRate = isFast ? new BigDecimal("1.2") : new BigDecimal("0.6");
+
                 ParkingSpot spot = ParkingSpot.builder()
                                 .pile(pile)
                                 .spotCode(spotNo)
                                 .spotType("STANDARD")
-                                .pricePerHour(new BigDecimal(random.nextInt(5) + 3)) // 3-8元/小时
-                                .serviceFee(new BigDecimal("0.8"))
+                                .pricePerHour(hourlyRate)
+                                .serviceFee(electricityRate)
                                 .status(1) // 初始默认为空闲(1)
                                 .build();
 

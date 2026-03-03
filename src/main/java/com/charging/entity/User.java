@@ -59,13 +59,6 @@ public class User {
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
-    /**
-     * 用户信用分，默认为100
-     */
-    @Column(name = "credit_score", nullable = false)
-    @Builder.Default
-    private Integer creditScore = 100;
-
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();

@@ -133,10 +133,10 @@ public class ChargingStationService {
      * 为新创建的站点的所有车位生成模拟预约时间条
      */
     private void generateReservationsForStation(ChargingStation station) {
-        User mockUser = userRepository.findAll().stream()
-                .filter(u -> u.getRole() == 0)
-                .findFirst()
-                .orElse(userRepository.findAll().stream().findFirst().orElse(null));
+        User mockUser = userRepository.findByUsername("_system")
+                .orElse(userRepository.findAll().stream()
+                        .filter(u -> u.getRole() == -1)
+                        .findFirst().orElse(null));
 
         if (mockUser == null) {
             log.warn("没有可用用户，跳过预约数据生成");
@@ -199,9 +199,14 @@ public class ChargingStationService {
                 conflict = true;
             }
             if (!conflict) {
-                int status = 1;
-                if (end.isBefore(now))
-                    status = 3;
+                int status;
+                if (end.isBefore(now)) {
+                    status = 3; // 已完成：整个时间段在过去
+                } else if (start.isAfter(now)) {
+                    status = 1; // 预约中：整个时间段在未来
+                } else {
+                    status = 2; // 使用中：当前时间在时间段内
+                }
                 saveReservation(user, spot, start, end, status, dailyReservations);
             }
         }

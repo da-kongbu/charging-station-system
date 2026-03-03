@@ -170,6 +170,12 @@ function getSpotStatus(status) {
   return statusMap[status] || { text: '未知', class: '' }
 }
 
+// 预约状态（用于时间轴 tooltip，与车位状态码不同）
+function getReservationStatusText(status) {
+  const map = { 0: '已取消', 1: '已预约', 2: '使用中', 3: '已完成' }
+  return map[status] || '未知'
+}
+
 function getSegmentStyle(slot) {
   // 1. 解析当前查看日期的 0点 和 24点
   // 假设 selectedDate 是 "2026-02-09"
@@ -278,7 +284,7 @@ function getSegmentStyle(slot) {
                   class="occupied-segment"
                   :class="'segment-status-' + slot.status"
                   :style="getSegmentStyle(slot)"
-                  :title="`${slot.startTime.slice(11,16)} - ${slot.endTime.slice(11,16)} [${getSpotStatus(slot.status).text}]`"
+                  :title="`${slot.startTime.slice(11,16)} - ${slot.endTime.slice(11,16)} [${getReservationStatusText(slot.status)}]`"
                 ></div>
               </div>
               <div class="timeline-labels">
@@ -289,7 +295,11 @@ function getSegmentStyle(slot) {
                 <span>23:59</span>
               </div>
             </div>
-            <small class="text-hint">红色区域表示已被预约的时间段</small>
+            <div class="timeline-legend">
+              <span class="legend-item"><i class="legend-dot" style="background:#ff4d4f"></i>使用中</span>
+              <span class="legend-item"><i class="legend-dot" style="background:#faad14"></i>已预约</span>
+              <span class="legend-item"><i class="legend-dot" style="background:#e8e8e8"></i>空闲可约</span>
+            </div>
           </div>
 
           <div class="form-group">
@@ -304,7 +314,7 @@ function getSegmentStyle(slot) {
 
           <div class="pricing-info">
             <div class="price-estimate">
-              <span>预估费用：</span>
+              <span>预估停车费：</span>
               <span class="price-value">¥{{ estimatedPrice }}</span>
             </div>
             <div class="pricing-rules">
@@ -523,6 +533,28 @@ function getSegmentStyle(slot) {
 }
 .segment-status-0 { /* 已取消/离线 */
   background-color: #8c8c8c;
+}
+
+.timeline-legend {
+  display: flex;
+  gap: 12px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #666;
+}
+
+.legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
 }
 
 .timeline-labels {

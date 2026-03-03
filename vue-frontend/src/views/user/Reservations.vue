@@ -8,6 +8,7 @@ const reservations = ref([])
 const loading = ref(true)
 const showMonitor = ref(false)
 const monitorReservationId = ref(0)
+const monitorPilePower = ref(7)
 
 // Toast通知
 const toast = ref({ show: false, message: '', type: 'success' })
@@ -85,8 +86,9 @@ function formatDate(str) {
   return new Date(str).toLocaleString('zh-CN')
 }
 
-function openMonitor(id) {
+function openMonitor(id, power) {
   monitorReservationId.value = id
+  monitorPilePower.value = power || 7
   showMonitor.value = true
 }
 </script>
@@ -121,15 +123,18 @@ function openMonitor(id) {
             <p><strong>充电桩：</strong>{{ r.pileCode }}</p>
             <p><strong>车位：</strong>{{ r.spotCode }}</p>
             <p><strong>预约时间：</strong>{{ formatDate(r.startTime) }} - {{ formatDate(r.endTime) }}</p>
-            <p><strong>预估费用：</strong>¥{{ r.estimatedCost || 0 }}</p>
+            <p><strong>预估停车费：</strong>¥{{ r.estimatedCost || 0 }}</p>
           </div>
 
 
           <div class="reservation-actions">
-            <button v-if="r.status === 1" class="btn btn-primary btn-sm" @click="handleCheckIn(r.id)">签到</button>
-            <button v-if="r.status === 2" class="btn btn-info btn-sm" @click="openMonitor(r.id)">⚡️ 监控</button>
+            <template v-if="r.status === 1">
+              <button class="btn btn-primary btn-sm" @click="handleCheckIn(r.id)">签到</button>
+              <small class="checkin-hint">（可提前5分钟签到，过期失效）</small>
+              <button class="btn btn-danger btn-sm" @click="handleCancel(r.id)">取消</button>
+            </template>
+            <button v-if="r.status === 2" class="btn btn-info btn-sm" @click="openMonitor(r.id, r.pilePower)">监控</button>
             <button v-if="r.status === 2" class="btn btn-primary btn-sm" @click="handleCheckOut(r.id)">结束充电</button>
-            <button v-if="r.status === 1" class="btn btn-danger btn-sm" @click="handleCancel(r.id)">取消</button>
           </div>
         </div>
       </div>
@@ -138,6 +143,7 @@ function openMonitor(id) {
     <ChargingMonitor 
       :visible="showMonitor" 
       :reservation-id="monitorReservationId"
+      :pile-power="monitorPilePower"
       @close="showMonitor = false" 
     />
 
@@ -200,9 +206,16 @@ function openMonitor(id) {
 .reservation-actions {
   display: flex;
   gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
   margin-top: 15px;
   padding-top: 15px;
   border-top: 1px solid #eee;
+}
+
+.checkin-hint {
+  color: #999;
+  font-size: 12px;
 }
 
 /* Toast Notification */

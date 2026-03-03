@@ -15,7 +15,7 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 public class ReservationDTO {
-    
+
     private Long id;
     private Long userId;
     private String username;
@@ -23,6 +23,8 @@ public class ReservationDTO {
     private String spotCode;
     private Long pileId;
     private String pileCode;
+    private String pileType;
+    private BigDecimal pilePower;
     private Long stationId;
     private String stationName;
     private String stationAddress;
@@ -33,7 +35,7 @@ public class ReservationDTO {
     private String statusText;
     private BigDecimal estimatedCost;
     private LocalDateTime createdAt;
-    
+
     public static String getStatusText(Integer status) {
         return switch (status) {
             case 0 -> "已取消";

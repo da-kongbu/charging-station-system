@@ -23,9 +23,6 @@ const authStore = useAuthStore()
 
       <div class="auth-buttons">
         <template v-if="authStore.isAuthenticated">
-          <span class="credit-score" v-if="authStore.user.creditScore !== undefined">
-            ⭐ {{ authStore.user.creditScore }}
-          </span>
           <span class="username">{{ authStore.user.username }}</span>
           <button @click="authStore.logout()" class="btn btn-outline btn-sm">退出</button>
         </template>
@@ -94,15 +91,6 @@ const authStore = useAuthStore()
   font-weight: 500;
 }
 
-.credit-score {
-  font-size: 0.9em;
-  color: #fbbf24;
-  margin-right: 5px;
-  background: #fffbeb;
-  padding: 2px 8px;
-  border-radius: 12px;
-  border: 1px solid #fcd34d;
-}
 
 @media (max-width: 768px) {
   .nav-links {

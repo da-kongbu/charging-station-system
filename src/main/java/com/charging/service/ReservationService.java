@@ -58,11 +58,6 @@ public class ReservationService {
         User user = userService.findById(userId)
                 .orElseThrow(() -> new RuntimeException("用户不存在"));
 
-        // 信用分校验
-        if (user.getCreditScore() < 60) {
-            throw new RuntimeException("信用分过低(" + user.getCreditScore() + ")，无法预约相关车位");
-        }
-
         // 使用悲观锁查询车位，防止并发预约
         ParkingSpot spot = parkingSpotRepository.findByIdForUpdate(request.getSpotId())
                 .orElseThrow(() -> new RuntimeException("车位不存在"));
@@ -128,11 +123,6 @@ public class ReservationService {
             throw new RuntimeException("当前状态无法取消");
         }
 
-        // 违约扣分规则：如果距离开始时间不足1小时，扣10分
-        if (reservation.getStartTime().isBefore(LocalDateTime.now().plusHours(1))) {
-            userService.deductCredit(userId, 10);
-        }
-
         reservation.setStatus(0); // 已取消
         Reservation saved = reservationRepository.save(reservation);
 
@@ -153,8 +143,21 @@ public class ReservationService {
             throw new RuntimeException("当前状态无法签到");
         }
 
+        LocalDateTime now = LocalDateTime.now();
+        // 允许提前5分钟签到
+        LocalDateTime earliestCheckIn = reservation.getStartTime().minusMinutes(5);
+        if (now.isBefore(earliestCheckIn)) {
+            throw new RuntimeException("还未到预约时间，最早可在 "
+                    + reservation.getStartTime().minusMinutes(5).toLocalTime() + " 签到");
+        }
+
+        // 如果已经超过预约结束时间，不允许签到
+        if (now.isAfter(reservation.getEndTime())) {
+            throw new RuntimeException("预约已过期，无法签到");
+        }
+
         reservation.setStatus(2); // 使用中
-        reservation.setActualArrivalTime(java.time.LocalDateTime.now());
+        reservation.setActualArrivalTime(now);
 
         // 更新车位状态
         ParkingSpot spot = reservation.getSpot();
@@ -173,12 +176,18 @@ public class ReservationService {
             throw new RuntimeException("当前状态无法结束");
         }
 
+        LocalDateTime now = LocalDateTime.now();
+        // 实际离开时间不能超过预约结束时间（超时按结束时间算）
+        LocalDateTime leaveTime = now.isAfter(reservation.getEndTime())
+                ? reservation.getEndTime()
+                : now;
+
         reservation.setStatus(3); // 已完成
-        reservation.setActualLeaveTime(LocalDateTime.now());
+        reservation.setActualLeaveTime(leaveTime);
 
         // 更新车位状态
         ParkingSpot spot = reservation.getSpot();
-        spot.setStatus(0); // 空闲
+        spot.setStatus(1); // 空闲
         parkingSpotRepository.save(spot);
 
         Reservation saved = reservationRepository.save(reservation);
@@ -210,6 +219,8 @@ public class ReservationService {
                 .spotCode(spot.getSpotCode())
                 .pileId(pile.getId())
                 .pileCode(pile.getPileCode())
+                .pileType(pile.getPileType())
+                .pilePower(pile.getPower())
                 .stationId(station.getId())
                 .stationName(station.getName())
                 .stationAddress(station.getAddress())

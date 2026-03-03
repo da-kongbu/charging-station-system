@@ -11,6 +11,10 @@ const props = defineProps({
   visible: {
     type: Boolean,
     default: false
+  },
+  pilePower: {
+    type: Number,
+    default: 7
   }
 })
 
@@ -89,6 +93,9 @@ function connectWebSocket() {
   }
 }
 
+// 全局缓存：关闭面板后重新打开时可以接上之前的数据
+const demoStateCache = new Map()
+
 function startDemoFallback() {
   if (demoMode.value) return
   demoMode.value = true
@@ -96,43 +103,58 @@ function startDemoFallback() {
   socketError.value = null
   console.log('进入演示模式 (Demo Mode)')
 
-  let soc = 20 + Math.floor(Math.random() * 30)
-  let energy = 0
+  const rid = props.reservationId
+  const POWER_KW = props.pilePower || 7.0
+  const BATTERY_CAPACITY_KWH = 60.0
+  const baseVoltage = POWER_KW > 50 ? 750 : 220
+  const baseCurrent = (POWER_KW * 1000) / baseVoltage
 
-  // 立即推送一次
-  chargingData.value = {
-    reservationId: props.reservationId,
-    status: 'CHARGING',
-    voltage: 220.5,
-    current: 31.8,
-    power: 7.01,
-    soc: soc,
-    remainingTime: (100 - soc) * 2,
-    chargedEnergy: 0
+  // 如果有缓存，接上之前的进度；否则生成新的起点
+  let state = demoStateCache.get(rid)
+  if (!state) {
+    const startSoc = POWER_KW > 50 ? (10 + Math.floor(Math.random() * 20)) : (20 + Math.floor(Math.random() * 30))
+    state = { startSoc, startTime: Date.now(), powerKw: POWER_KW }
+    demoStateCache.set(rid, state)
   }
 
-  // 每2秒推送
-  demoInterval = setInterval(() => {
-    if (soc < 100) {
-      soc += Math.random() > 0.1 ? 1 : 0
-    }
-    const voltage = (220 + (Math.random() * 10 - 5)).toFixed(1)
-    const current = (32 + (Math.random() * 4 - 2)).toFixed(1)
-    const power = ((voltage * current) / 1000).toFixed(2)
-    energy += (power * 2) / 3600
-    const remaining = (100 - soc) * 2
+  const { startSoc, startTime } = state
 
-    chargingData.value = {
-      reservationId: props.reservationId,
-      status: soc >= 100 ? 'COMPLETED' : 'CHARGING',
+  // 计算当前进度（基于首次打开以来的真实时间）
+  function calcData() {
+    const elapsedSeconds = (Date.now() - startTime) / 1000
+    const elapsedHours = elapsedSeconds / 3600
+    const energy = POWER_KW * elapsedHours
+    const socGain = (energy / BATTERY_CAPACITY_KWH) * 100
+    const currentSoc = Math.min(100, Math.round(startSoc + socGain))
+    const voltage = (baseVoltage + (Math.random() * 6 - 3)).toFixed(1)
+    const current = (baseCurrent + (Math.random() * 3 - 1.5)).toFixed(1)
+    const power = ((voltage * current) / 1000).toFixed(2)
+    const remainingKwh = ((100 - currentSoc) / 100) * BATTERY_CAPACITY_KWH
+    const remainingMinutes = Math.round((remainingKwh / POWER_KW) * 60)
+
+    return {
+      reservationId: rid,
+      status: currentSoc >= 100 ? 'COMPLETED' : 'CHARGING',
       voltage: parseFloat(voltage),
       current: parseFloat(current),
       power: parseFloat(power),
-      soc: soc,
-      remainingTime: remaining,
+      soc: currentSoc,
+      remainingTime: remainingMinutes,
       chargedEnergy: parseFloat(energy.toFixed(2))
     }
-  }, 2000)
+  }
+
+  // 立即显示当前进度
+  chargingData.value = calcData()
+
+  // 每秒刷新
+  demoInterval = setInterval(() => {
+    chargingData.value = calcData()
+    if (chargingData.value.soc >= 100) {
+      clearInterval(demoInterval)
+      demoInterval = null
+    }
+  }, 1000)
 }
 
 function stopDemo() {
@@ -172,7 +194,7 @@ function getBatteryColor(soc) {
   <div v-if="visible" class="modal-overlay" @click.self="close">
     <div class="modal-content">
       <div class="modal-header">
-        <h3>⚡️ 实时充电监控</h3>
+        <h3>实时充电监控</h3>
         <button class="close-btn" @click="close">×</button>
       </div>
       
@@ -183,7 +205,7 @@ function getBatteryColor(soc) {
         </div>
 
         <div v-if="socketError" class="error-state">
-          <p>⚠️ {{ socketError }}</p>
+          <p>{{ socketError }}</p>
         </div>
 
         <div v-if="connected && !chargingData" class="waiting-state">
@@ -193,7 +215,7 @@ function getBatteryColor(soc) {
 
         <div v-if="chargingData" class="dashboard">
           <!-- 演示模式提示 -->
-          <div v-if="demoMode" class="demo-badge">📊 演示模式</div>
+          <div v-if="demoMode" class="demo-badge">演示模式</div>
 
           <div class="battery-section">
             <div class="battery-shell">
@@ -203,7 +225,7 @@ function getBatteryColor(soc) {
               </div>
               <div class="battery-tip"></div>
             </div>
-            <p class="status-text">{{ chargingData.status === 'COMPLETED' ? '充电完成 ✅' : '正在充电...' }}</p>
+            <p class="status-text">{{ chargingData.status === 'COMPLETED' ? '充电完成' : '正在充电...' }}</p>
           </div>
 
           <div class="metrics-grid">
@@ -226,10 +248,8 @@ function getBatteryColor(soc) {
           </div>
           
           <div class="chart-area">
-             <div class="wave-container">
-               <div class="wave"></div>
-               <div class="wave"></div>
-               <div class="wave"></div>
+             <div class="progress-bar-track">
+               <div class="progress-bar-fill" :style="{ width: chargingData.soc + '%', background: getBatteryColor(chargingData.soc) }"></div>
              </div>
              <p class="remaining-time">预计剩余时间: {{ chargingData.remainingTime }} 分钟</p>
           </div>
@@ -403,33 +423,18 @@ function getBatteryColor(soc) {
   color: #9ca3af;
 }
 
-.wave-container {
-  height: 40px;
-  background: #e0f2fe;
+.progress-bar-track {
+  height: 16px;
+  background: #e5e7eb;
   border-radius: 8px;
-  position: relative;
   overflow: hidden;
   margin-bottom: 10px;
 }
 
-.wave {
-  position: absolute;
-  width: 200%;
+.progress-bar-fill {
   height: 100%;
-  background: rgba(59, 130, 246, 0.2);
-  top: 0;
-  left: 0;
-  animation: moveWave 3s linear infinite;
-}
-
-.wave:nth-child(2) {
-  animation-duration: 5s;
-  background: rgba(59, 130, 246, 0.1);
-}
-
-@keyframes moveWave {
-  0% { transform: translateX(0); }
-  100% { transform: translateX(-50%); }
+  border-radius: 8px;
+  transition: width 1s ease;
 }
 
 .remaining-time {

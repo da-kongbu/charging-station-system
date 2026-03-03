@@ -59,7 +59,6 @@ public class UserService {
                 .realName(request.getRealName())
                 .role(0) // 普通用户
                 .status(1) // 正常状态
-                .creditScore(100) // 初始信用分
                 .build();
 
         return userRepository.save(user);
@@ -114,31 +113,5 @@ public class UserService {
 
     public boolean existsByUsername(String username) {
         return userRepository.existsByUsername(username);
-    }
-
-    @Transactional
-    public void deductCredit(Long userId, int points) {
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new RuntimeException("用户不存在"));
-
-        int newScore = user.getCreditScore() - points;
-        if (newScore < 0)
-            newScore = 0;
-
-        user.setCreditScore(newScore);
-        userRepository.save(user);
-    }
-
-    @Transactional
-    public void addCredit(Long userId, int points) {
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new RuntimeException("用户不存在"));
-
-        int newScore = user.getCreditScore() + points;
-        if (newScore > 100)
-            newScore = 100; // 上限100
-
-        user.setCreditScore(newScore);
-        userRepository.save(user);
     }
 }
