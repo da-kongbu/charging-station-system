@@ -16,7 +16,10 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * 订单服务
+ * 订单计费与支付服务
+ * 
+ * 作用：处理一次拔枪后带来的资金结算核心逻辑。
+ * 它包含：动态阶梯停车费计算、峰谷电价充电费计算、模拟发起支付及状态流转等。
  */
 @Service
 @RequiredArgsConstructor
@@ -24,7 +27,7 @@ public class OrderService {
 
     private final OrderRepository orderRepository;
     private final ReservationRepository reservationRepository;
-    private final NotificationService notificationService;
+    private final NotificationService notificationService; // 用于支付成功后发短信/邮件
 
     public List<Order> findAll() {
         return orderRepository.findAll();
@@ -42,12 +45,18 @@ public class OrderService {
         return orderRepository.findByOrderNo(orderNo);
     }
 
-    @Transactional
+    /**
+     * 核心计费引擎：用一笔已经完成充电的预约记录，算账并生成一条扣费总单
+     * <p>
+     * 计费公式 = 动态停车费 + 实际充电耗电费 + 固定系统分润服务费
+     * </p>
+     */
+    @Transactional // 开启事务，保证要生成单子就全部成功落地
     public Order createFromReservation(Long reservationId) {
         Reservation reservation = reservationRepository.findById(reservationId)
                 .orElseThrow(() -> new RuntimeException("预约不存在"));
 
-        // 检查是否已有订单
+        // 幂等性检查：防抖止连点产生重复订单
         Optional<Order> existingOrder = orderRepository.findByReservationId(reservationId);
         if (existingOrder.isPresent()) {
             return existingOrder.get();
@@ -56,7 +65,7 @@ public class OrderService {
         ParkingSpot spot = reservation.getSpot();
         ChargingPile pile = spot.getPile();
 
-        // 计算实际使用时间
+        // 计算账单跨度：判断是取真实的进出场物理打卡时间，还是兜底使用预约理论时间
         LocalDateTime start = reservation.getActualArrivalTime() != null
                 ? reservation.getActualArrivalTime()
                 : reservation.getStartTime();
@@ -64,35 +73,42 @@ public class OrderService {
                 ? reservation.getActualLeaveTime()
                 : reservation.getEndTime();
 
-        // 1. 停车费：按小时计费（含峰谷动态定价）
+        // 1. 停车费部分：私有私用 calculateDynamicFee 方法计算（有白天涨价黑夜便宜的逻辑）
         BigDecimal parkingFee = calculateDynamicFee(start, end, spot.getPricePerHour());
 
-        // 2. 充电费（核心费用）：充电桩功率(kW) × 使用时长(小时) × 电费单价(元/度)
+        // 2. 充电费部分（平台核心）：= 设备千瓦功率(kW) × 几小时(h) × 电费单价(元/度)
         BigDecimal chargingFee = BigDecimal.ZERO;
+        // 如果此枪没单独设电价，全场兜底按平均电价 0.6 元
         BigDecimal electricityRate = spot.getServiceFee() != null
                 ? spot.getServiceFee()
-                : new BigDecimal("0.6"); // 默认电费 0.6 元/度
+                : new BigDecimal("0.6");
+
+        // 提取被充的硬设备参数，算出电表度数
         if (pile != null && pile.getPower() != null) {
             long durationMinutes = java.time.Duration.between(start, end).toMinutes();
+            // 换算小时，保留四位小数免得丢精度
             BigDecimal durationHours = BigDecimal.valueOf(durationMinutes)
                     .divide(BigDecimal.valueOf(60), 4, java.math.RoundingMode.HALF_UP);
-            // 充电量(kWh) = 功率(kW) × 时长(小时)
+
+            // 累积耗电量(度)
             BigDecimal chargedKwh = pile.getPower().multiply(durationHours);
-            // 充电费 = 充电量 × 电价
+
+            // 乘电价得出这块的费用总额(2位小数)
             chargingFee = chargedKwh.multiply(electricityRate)
                     .setScale(2, java.math.RoundingMode.HALF_UP);
         }
 
-        // 3. 服务费（固定小额）
+        // 3. 平台抽水附加费（固定一笔象征性金额，比如服务器摊销）
         BigDecimal serviceFee = new BigDecimal("0.80");
 
-        // 总计 = 停车费 + 充电费 + 服务费
+        // 三费合一，得出需要前台扫码支付的总额
         BigDecimal totalAmount = parkingFee.add(chargingFee).add(serviceFee);
 
-        // 生成订单号
+        // 生成给微信用的内部交易号流：ORD + 毫秒级时间戳 + 4位随机码
         String orderNo = "ORD" + System.currentTimeMillis() +
                 String.format("%04d", (int) (Math.random() * 10000));
 
+        // 组装最终流水
         Order order = Order.builder()
                 .orderNo(orderNo)
                 .user(reservation.getUser())
@@ -101,30 +117,33 @@ public class OrderService {
                 .chargingFee(chargingFee)
                 .serviceFee(serviceFee)
                 .totalAmount(totalAmount)
-                .paymentStatus(0)
-                .status(1) // 待支付
+                .paymentStatus(0) // 0=出金待付款
+                .status(1)
                 .build();
 
         return orderRepository.save(order);
     }
 
+    /**
+     * 模拟用户前端走完沙箱支付流水后，回调回来的切面
+     */
     @Transactional
     public Order pay(Long orderId, String paymentMethod) {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new RuntimeException("订单不存在"));
 
         if (order.getPaymentStatus() == 1) {
-            throw new RuntimeException("订单已支付");
+            throw new RuntimeException("订单已被重复标记为支付");
         }
 
-        // 模拟支付逻辑及回调
+        // --- 现实中这里会通过回调验证微信签名或者异步查单等操作，此处为模拟 ---
 
-        order.setPaymentMethod(paymentMethod);
-        order.setPaymentStatus(1);
+        order.setPaymentMethod(paymentMethod); // 如："WECHAT"
+        order.setPaymentStatus(1); // 置为己付
         order.setPaymentTime(LocalDateTime.now());
-        order.setStatus(2); // 已支付
+        order.setStatus(2); // 订单业务流流转
 
-        // 发送通知
+        // 付款成功后，借助解耦好的消息服务去弹短信
         if (order.getUser() != null) {
             notificationService.sendSms(order.getUser().getPhone(), "订单 " + order.getOrderNo() + " 支付成功");
             notificationService.sendEmail(order.getUser().getEmail(), "支付成功通知", "您的订单已支付完成。");
@@ -139,10 +158,10 @@ public class OrderService {
                 .orElseThrow(() -> new RuntimeException("订单不存在"));
 
         if (order.getPaymentStatus() != 1) {
-            throw new RuntimeException("订单未支付");
+            throw new RuntimeException("没付钱怎么可能强制拉取完单");
         }
 
-        order.setStatus(3); // 已完成
+        order.setStatus(3); // 3-彻底死档完成
         return orderRepository.save(order);
     }
 
@@ -152,27 +171,34 @@ public class OrderService {
                 .orElseThrow(() -> new RuntimeException("订单不存在"));
 
         if (order.getPaymentStatus() == 1) {
-            throw new RuntimeException("已支付订单无法直接取消");
+            throw new RuntimeException("这单钱都付了，不能单方面流标，请走售后退款");
         }
 
-        order.setStatus(0); // 已取消
+        order.setStatus(0); // 废弃撤销
         return orderRepository.save(order);
     }
 
+    /**
+     * 财务报表用：聚合指定时间段内完成交割完档的单量
+     */
     public Long countCompletedOrders(LocalDateTime start, LocalDateTime end) {
         return orderRepository.countCompletedOrdersBetween(start, end);
     }
 
+    /**
+     * 财务报表用：聚合出在这个时间段内的总流水账额金钱总量
+     */
     public BigDecimal calculateRevenue(LocalDateTime start, LocalDateTime end) {
         BigDecimal revenue = orderRepository.sumRevenueBetween(start, end);
         return revenue != null ? revenue : BigDecimal.ZERO;
     }
 
     /**
-     * 计算动态停车费用
-     * 峰期 (08:00-10:00, 17:00-21:00): 1.5倍
-     * 谷期 (23:00-07:00): 0.5倍
-     * 平期 (其他): 1.0倍
+     * 内部动态算法：计算阶梯定价的纯停车费用 (Time-of-Use pricing 核心逻辑)
+     * 规则：
+     * 早晚高峰拥堵期 (08:00-10:00, 17:00-21:00): 价格膨胀 1.5 倍
+     * 深夜没人要谷期 (23:00-07:00): 打半价 0.5 倍
+     * 其他时间: 原价 1.0 倍
      */
     private BigDecimal calculateDynamicFee(LocalDateTime start, LocalDateTime end, BigDecimal pricePerHour) {
         if (pricePerHour == null || start.isAfter(end)) {
@@ -180,9 +206,11 @@ public class OrderService {
         }
 
         BigDecimal totalFee = BigDecimal.ZERO;
+        // 把单价按小时拍碎成到每一分钟头上的钱，以便最细颗粒度累计
         BigDecimal pricePerMinute = pricePerHour.divide(BigDecimal.valueOf(60), 4, java.math.RoundingMode.HALF_UP);
 
         LocalDateTime current = start;
+        // 暴力跑圈：每一分钟推过去，累加每一分钟那一会儿是什么价格段
         while (current.isBefore(end)) {
             int hour = current.getHour();
             BigDecimal multiplier = BigDecimal.ONE;
@@ -200,12 +228,13 @@ public class OrderService {
             current = current.plusMinutes(1);
         }
 
-        // 最低收费（至少15分钟的平期价格）
+        // 行业潜规则：进门拔毛最低消费防死耗线（默认只要接单了即便秒退，也收 1/4 小时费用起步）
         BigDecimal minimumFee = pricePerHour.divide(BigDecimal.valueOf(4), 2, java.math.RoundingMode.HALF_UP);
         if (totalFee.compareTo(minimumFee) < 0) {
             return minimumFee;
         }
 
+        // 把最终值抹平回日常可读的保留2位小数点
         return totalFee.setScale(2, java.math.RoundingMode.HALF_UP);
     }
 }

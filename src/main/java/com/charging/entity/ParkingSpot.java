@@ -8,7 +8,10 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
- * 车位实体类
+ * 停车位实体类 (JPA Entity)
+ * 
+ * 作用：映射数据库的 `parking_spots` 表。
+ * 代表物理世界中用来泊车的一个真实长方形格子。
  */
 @Entity
 @Table(name = "parking_spots")
@@ -23,6 +26,10 @@ public class ParkingSpot {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    /**
+     * 该车位旁边立着的是哪一个充电桩（即归属于哪个桩）
+     * FetchType.LAZY 懒加载，提高查询列表时的性能
+     */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "pile_id", nullable = false)
     @ToString.Exclude
@@ -30,20 +37,22 @@ public class ParkingSpot {
     private ChargingPile pile;
 
     /**
-     * 车位编码
+     * 系统内部识别用的车位维一编码卡号
      */
     @Column(name = "spot_code", unique = true, nullable = false, length = 50)
     private String spotCode;
 
     /**
-     * 车位类型：STANDARD-标准车位，LARGE-大型车位，SMALL-小型车位
+     * 车位的尺寸类型：
+     * STANDARD-标准轿车位，LARGE-大型车宽体车位，SMALL-老头乐/微型车位
      */
     @Column(name = "spot_type", length = 20)
     @Builder.Default
     private String spotType = "STANDARD";
 
     /**
-     * 每小时价格（元）
+     * 该坑位的纯停车占位费费率（元/小时）
+     * （比如防止充满电不走的人，收取高昂的超时占位费）
      */
     @Column(name = "price_per_hour", precision = 10, scale = 2)
     private BigDecimal pricePerHour;
@@ -55,7 +64,8 @@ public class ParkingSpot {
     private BigDecimal serviceFee;
 
     /**
-     * 状态：0-不可用，1-空闲，2-已预约，3-使用中
+     * 坑位实时地锁状态监控：
+     * 0-因为故障或积水不可用，1-空闲中（地锁升起），2-已被人按下了预约（地锁保留），3-汽车已经停入（地锁降下/超声波探头触发）
      */
     @Column(nullable = false)
     @Builder.Default
