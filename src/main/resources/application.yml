@@ -1,5 +1,11 @@
 server:
   port: 8080
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
+      force-response: true
 
 spring:
   profiles:
@@ -47,3 +53,13 @@ logging:
   level:
     com.charging: DEBUG
     org.springframework.security: DEBUG
+
+# AI 大模型配置（硅基流动 SiliconFlow）
+ai:
+  siliconflow:
+    api-key: "sk-ozgzukrkodnpqybylqjsmkevsjuustwaoyldflhbndodkmgx"
+    url: "https://api.siliconflow.cn/v1/chat/completions"
+    model: "deepseek-ai/DeepSeek-V3"
+    embedding-url: "https://api.siliconflow.cn/v1/embeddings"
+    embedding-model: "BAAI/bge-m3"
+

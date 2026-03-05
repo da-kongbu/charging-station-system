@@ -76,6 +76,7 @@ public class UserService {
      */
     @Transactional
     public User update(Long id, User updateData) {
+        //从数据库里根据id读取用户数据
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("用户不存在"));
 
@@ -95,14 +96,17 @@ public class UserService {
     /**
      * 针对非常敏感的关键密码修改建立特殊隔离管道
      */
+    //加事务锁
     @Transactional
     public void updatePassword(Long id, String oldPassword, String newPassword) {
+        //根据id搜索用户
         User user = userRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("老兄你号呢？"));
+                .orElseThrow(() -> new RuntimeException("用户不存在"));
 
         // 由于盐机制，明文密码即便长一样散列出的密文也可能相异，必须用指定的 matches() 解构验核真假
+        //使用matches判断是否一致
         if (!passwordEncoder.matches(oldPassword, user.getPassword())) {
-            throw new RuntimeException("老密码对不上，身份可疑防盗号驳回！");
+            throw new RuntimeException("密码输入错误！");
         }
 
         // 只有验核真身对牌成功了，才给换新密文锁心挂回门上存起
@@ -116,7 +120,7 @@ public class UserService {
     @Transactional
     public void updateStatus(Long id, Integer status) {
         User user = userRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("找错处理靶机"));
+                .orElseThrow(() -> new RuntimeException("未找到该用户"));
         user.setStatus(status); // 把如 0 传进去，让他之后登录时抛出禁止异常
         userRepository.save(user);
     }

@@ -64,6 +64,8 @@ public class SecurityConfig {
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers("/api/stations/**").permitAll()
                         .requestMatchers("/api/public/**").permitAll()
+                        // AI 智能客服（允许未登录用户使用）
+                        .requestMatchers("/api/ai/**").permitAll()
                         // WebSocket
                         .requestMatchers("/ws/**").permitAll()
                         // Swagger UI

@@ -262,15 +262,19 @@ public class ChargingStationService {
     private ChargingStationDTO convertToDTO(ChargingStation station) {
         List<ChargingPile> piles = pileRepository.findByStationId(station.getId());
 
-        // 数出站里状态为 1 (空闲可用) 的充电柱个数，用于展示在列表告诉车主此站闲着没
-        int availableCount = (int) piles.stream()
-                .filter(p -> p.getStatus() == 1)
-                .count();
-
         // 递归降维套娃打包柱子
         List<ChargingPileDTO> pileDTOs = piles.stream()
                 .map(this::convertPileToDTO)
                 .collect(Collectors.toList());
+
+        // 判断空闲桩数：一个桩算"可用"需要满足两个条件：
+        // 1. 桩本身物理状态正常 (status == 1)
+        // 2. 桩底下至少有一个车位 DTO 的动态状态 == 1（空闲，已经过预约数据动态计算）
+        int availableCount = (int) pileDTOs.stream()
+                .filter(p -> p.getStatus() == 1) // 桩物理状态正常
+                .filter(p -> p.getParkingSpots() != null
+                        && p.getParkingSpots().stream().anyMatch(s -> s.getStatus() == 1)) // 底下有空闲车位
+                .count();
 
         return ChargingStationDTO.builder()
                 .id(station.getId())
@@ -308,21 +312,35 @@ public class ChargingStationService {
                 .current(pile.getCurrent())
                 .brand(pile.getBrand())
                 .connectorType(pile.getConnectorType())
-                .status(pile.getStatus())
+                .status(pile.getStatus()) // 直接使用数据库原始状态，不做动态覆盖
                 .parkingSpots(spotDTOs)
                 .build();
     }
 
     private ParkingSpotDTO convertSpotToDTO(ParkingSpot spot) {
-        // 最底层原子数据组装
+        int dynamicStatus = spot.getStatus();
+
+        // 只有在车位物理状态正常（1-空闲）的情况下，才去判断未来两小时内有没有人预约
+        // 防止把原本“故障(0)”的车位强行显示成“空闲(1)”或“预约中(2)”
+        if (dynamicStatus == 1) {
+            LocalDateTime now = LocalDateTime.now();
+            LocalDateTime twoHoursLater = now.plusHours(2);
+            List<Reservation> upcomingReservations = reservationRepository.findConflictingReservations(
+                    spot.getId(), now, twoHoursLater);
+
+            if (!upcomingReservations.isEmpty()) {
+                dynamicStatus = 2; // 2-预约中/锁定
+            }
+        }
+
         return ParkingSpotDTO.builder()
                 .id(spot.getId())
                 .spotCode(spot.getSpotCode())
-                .spotNo(spot.getSpotCode()) // No等同于Code做回退兼容
+                .spotNo(spot.getSpotCode())
                 .spotType(spot.getSpotType())
                 .pricePerHour(spot.getPricePerHour())
                 .serviceFee(spot.getServiceFee())
-                .status(spot.getStatus())
+                .status(dynamicStatus) // 基于原有状态 + 预约数据计算出的最终状态
                 .build();
     }
 }

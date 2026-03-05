@@ -43,9 +43,11 @@ public class ReservationService {
     }
 
     public List<ReservationDTO> findBySpotAndDate(Long spotId, LocalDate date) {
+        //一天内的起始时间0:0:0
         LocalDateTime startOfDay = date.atStartOfDay();
+        //一天内的最大时间23:59:59:9999
         LocalDateTime endOfDay = date.atTime(LocalTime.MAX);
-
+        //根据时间范围，返回符合时间的充电站
         return reservationRepository.findBySpotIdAndDateRange(spotId, startOfDay, endOfDay).stream()
                 .map(this::convertToDTO)
                 .collect(Collectors.toList());
@@ -220,24 +222,24 @@ public class ReservationService {
     }
 
     /**
-     * 将繁重臃肿带着双向指针链且包含大量子对象的记录提取过滤转化成前端极简表。
+     * 把数据提取为前端所需要的实体
      */
     private ReservationDTO convertToDTO(Reservation reservation) {
         ParkingSpot spot = reservation.getSpot();
         var pile = spot.getPile();
         var station = pile.getStation();
 
-        // 这里仅为了纯前端界面列表页的简单展示（并非实际打表数额）算个数额占位
+        // 预估充电价格
         long hours = Duration.between(reservation.getStartTime(), reservation.getEndTime()).toHours();
         if (hours < 1)
             hours = 1;
         BigDecimal estimatedCost = spot.getPricePerHour() != null
                 ? spot.getPricePerHour().multiply(BigDecimal.valueOf(hours))
                 : BigDecimal.ZERO;
-
+        // 四层连表嵌套：预约->车位->充电桩->充电站
         return ReservationDTO.builder()
                 .id(reservation.getId())
-                // 击穿四层连表嵌套：预约->车位->桩柱->场站
+
                 .userId(reservation.getUser().getId())
                 .username(reservation.getUser().getUsername())
                 .spotId(spot.getId())

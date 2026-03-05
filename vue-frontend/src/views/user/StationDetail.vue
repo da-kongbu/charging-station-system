@@ -238,8 +238,13 @@ function getSegmentStyle(slot) {
         <div v-for="pile in station.piles" :key="pile.id" class="pile-card card mb-2">
         <div class="pile-header">
             <h3>{{ pile.pileCode }} 充电桩</h3>
-            <span class="badge" :class="pile.status === 1 ? 'badge-success' : 'badge-danger'">
-              {{ pile.status === 1 ? '正常' : '故障' }}
+            <span class="badge" :class="{
+              'badge-secondary': pile.status === 0,
+              'badge-success': pile.status === 1,
+              'badge-warning': pile.status === 2,
+              'badge-danger': pile.status === 3
+            }">
+              {{ pile.status === 0 ? '离线' : pile.status === 1 ? '正常' : pile.status === 2 ? '充电中' : '故障' }}
             </span>
           </div>
           <p class="pile-type">类型：{{ pile.pileType === 'DC' ? '快充' : '慢充' }} | 功率：{{ pile.power }}kW</p>
