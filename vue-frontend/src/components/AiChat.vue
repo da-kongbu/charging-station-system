@@ -119,9 +119,77 @@ function scrollToBottom() {
   })
 }
 
-/** 将换行符转为 <br> */
+/** 轻量 Markdown → HTML 渲染 */
 function formatMessage(text) {
-  return text?.replace(/\n/g, '<br>') || ''
+  if (!text) return ''
+
+  // 按行拆分处理
+  const lines = text.split('\n')
+  let html = ''
+  let inList = false   // 是否正在无序列表中
+  let inOList = false  // 是否正在有序列表中
+
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i]
+
+    // 1. 标题 ### → <h4>，## → <h3>，# → <h2>
+    if (/^### (.+)/.test(line)) {
+      if (inList) { html += '</ul>'; inList = false }
+      if (inOList) { html += '</ol>'; inOList = false }
+      html += `<strong style="font-size:1em;display:block;margin:8px 0 4px">${line.replace(/^### /, '')}</strong>`
+      continue
+    }
+    if (/^## (.+)/.test(line)) {
+      if (inList) { html += '</ul>'; inList = false }
+      if (inOList) { html += '</ol>'; inOList = false }
+      html += `<strong style="font-size:1.05em;display:block;margin:10px 0 4px">${line.replace(/^## /, '')}</strong>`
+      continue
+    }
+
+    // 2. 无序列表 - xxx 或 * xxx
+    if (/^[\-\*]\s+(.+)/.test(line)) {
+      if (inOList) { html += '</ol>'; inOList = false }
+      if (!inList) { html += '<ul style="margin:4px 0;padding-left:18px">'; inList = true }
+      const content = line.replace(/^[\-\*]\s+/, '')
+      html += `<li>${inlineMd(content)}</li>`
+      continue
+    }
+
+    // 3. 有序列表 1. xxx
+    if (/^\d+\.\s+(.+)/.test(line)) {
+      if (inList) { html += '</ul>'; inList = false }
+      if (!inOList) { html += '<ol style="margin:4px 0;padding-left:18px">'; inOList = true }
+      const content = line.replace(/^\d+\.\s+/, '')
+      html += `<li>${inlineMd(content)}</li>`
+      continue
+    }
+
+    // 非列表行：关闭之前打开的列表
+    if (inList) { html += '</ul>'; inList = false }
+    if (inOList) { html += '</ol>'; inOList = false }
+
+    // 4. 空行 → 段落间距
+    if (line.trim() === '') {
+      html += '<div style="height:8px"></div>'
+      continue
+    }
+
+    // 5. 普通文本行
+    html += `<div>${inlineMd(line)}</div>`
+  }
+
+  // 收尾：关闭未关闭的列表
+  if (inList) html += '</ul>'
+  if (inOList) html += '</ol>'
+
+  return html
+}
+
+/** 行内 Markdown：**加粗**、*斜体* */
+function inlineMd(text) {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
 }
 
 /** 发送消息 */
