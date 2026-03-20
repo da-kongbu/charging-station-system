@@ -126,61 +126,120 @@ function formatMessage(text) {
   // 按行拆分处理
   const lines = text.split('\n')
   let html = ''
-  let inList = false   // 是否正在无序列表中
-  let inOList = false  // 是否正在有序列表中
+  let inRootList = false
+  let inOrderedList = false
+  let orderedItemOpen = false
+  let inNestedList = false
+
+  const closeRootList = () => {
+    if (inRootList) {
+      html += '</ul>'
+      inRootList = false
+    }
+  }
+
+  const closeNestedList = () => {
+    if (inNestedList) {
+      html += '</ul>'
+      inNestedList = false
+    }
+  }
+
+  const closeOrderedItem = () => {
+    closeNestedList()
+    if (orderedItemOpen) {
+      html += '</li>'
+      orderedItemOpen = false
+    }
+  }
+
+  const closeOrderedList = () => {
+    closeOrderedItem()
+    if (inOrderedList) {
+      html += '</ol>'
+      inOrderedList = false
+    }
+  }
+
+  const closeAllLists = () => {
+    closeRootList()
+    closeOrderedList()
+  }
 
   for (let i = 0; i < lines.length; i++) {
-    let line = lines[i]
+    const line = lines[i]
+    const trimmed = line.trim()
+    const orderedMatch = trimmed.match(/^(\d+)\.\s+(.+)/)
+    const unorderedMatch = trimmed.match(/^[\-\*]\s+(.+)/)
 
     // 1. 标题 ### → <h4>，## → <h3>，# → <h2>
-    if (/^### (.+)/.test(line)) {
-      if (inList) { html += '</ul>'; inList = false }
-      if (inOList) { html += '</ol>'; inOList = false }
-      html += `<strong style="font-size:1em;display:block;margin:8px 0 4px">${line.replace(/^### /, '')}</strong>`
+    if (/^### (.+)/.test(trimmed)) {
+      closeAllLists()
+      html += `<strong style="font-size:1em;display:block;margin:8px 0 4px">${trimmed.replace(/^### /, '')}</strong>`
       continue
     }
-    if (/^## (.+)/.test(line)) {
-      if (inList) { html += '</ul>'; inList = false }
-      if (inOList) { html += '</ol>'; inOList = false }
-      html += `<strong style="font-size:1.05em;display:block;margin:10px 0 4px">${line.replace(/^## /, '')}</strong>`
-      continue
-    }
-
-    // 2. 无序列表 - xxx 或 * xxx
-    if (/^[\-\*]\s+(.+)/.test(line)) {
-      if (inOList) { html += '</ol>'; inOList = false }
-      if (!inList) { html += '<ul style="margin:4px 0;padding-left:18px">'; inList = true }
-      const content = line.replace(/^[\-\*]\s+/, '')
-      html += `<li>${inlineMd(content)}</li>`
+    if (/^## (.+)/.test(trimmed)) {
+      closeAllLists()
+      html += `<strong style="font-size:1.05em;display:block;margin:10px 0 4px">${trimmed.replace(/^## /, '')}</strong>`
       continue
     }
 
-    // 3. 有序列表 1. xxx
-    if (/^\d+\.\s+(.+)/.test(line)) {
-      if (inList) { html += '</ul>'; inList = false }
-      if (!inOList) { html += '<ol style="margin:4px 0;padding-left:18px">'; inOList = true }
-      const content = line.replace(/^\d+\.\s+/, '')
-      html += `<li>${inlineMd(content)}</li>`
-      continue
-    }
-
-    // 非列表行：关闭之前打开的列表
-    if (inList) { html += '</ul>'; inList = false }
-    if (inOList) { html += '</ol>'; inOList = false }
-
-    // 4. 空行 → 段落间距
-    if (line.trim() === '') {
+    // 2. 空行：列表内部跳过，普通段落增加间距
+    if (trimmed === '') {
+      if (inRootList || inOrderedList || orderedItemOpen || inNestedList) {
+        continue
+      }
       html += '<div style="height:8px"></div>'
       continue
     }
 
+    // 3. 有序列表 1. xxx
+    if (orderedMatch) {
+      closeRootList()
+      if (!inOrderedList) {
+        html += '<ol style="margin:4px 0;padding-left:22px">'
+        inOrderedList = true
+      } else {
+        closeOrderedItem()
+      }
+      html += `<li>${inlineMd(orderedMatch[2])}`
+      orderedItemOpen = true
+      continue
+    }
+
+    // 4. 无序列表 - xxx 或 * xxx
+    if (unorderedMatch) {
+      const content = unorderedMatch[1]
+      if (orderedItemOpen) {
+        if (!inNestedList) {
+          html += '<ul style="margin:6px 0 2px;padding-left:18px">'
+          inNestedList = true
+        }
+        html += `<li>${inlineMd(content)}</li>`
+      } else {
+        closeOrderedList()
+        if (!inRootList) {
+          html += '<ul style="margin:4px 0;padding-left:18px">'
+          inRootList = true
+        }
+        html += `<li>${inlineMd(content)}</li>`
+      }
+      continue
+    }
+
     // 5. 普通文本行
-    html += `<div>${inlineMd(line)}</div>`
+    if (orderedItemOpen) {
+      closeNestedList()
+      html += `<div style="margin:4px 0">${inlineMd(trimmed)}</div>`
+      continue
+    }
+
+    closeAllLists()
+    html += `<div>${inlineMd(trimmed)}</div>`
   }
 
   // 收尾：关闭未关闭的列表
-  if (inList) html += '</ul>'
-  if (inOList) html += '</ol>'
+  closeAllLists()
 
   return html
 }
@@ -217,7 +276,11 @@ async function sendMessage() {
       const response = await fetch(url)
       const json = await response.json()
       isLoading.value = false
-      const answer = json.data || json.message || '暂无回复'
+      const answer = (typeof json.data === 'string' && json.data.trim())
+        ? json.data
+        : (json.code === 200
+            ? '抱歉，智充助手暂时没有生成有效回复，请稍后再试。'
+            : (json.message || '暂无回复'))
       messages.value.push({ role: 'assistant', content: answer })
     } else {
       // ===== 流式模式：提前创建空气泡用于逐字追加 =====

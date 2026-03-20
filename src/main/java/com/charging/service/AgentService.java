@@ -86,6 +86,7 @@ public class AgentService {
             // 把用户位置存入 ThreadLocal，工具函数执行时可以取到
             currentLat.set(lat);
             currentLng.set(lng);
+            List<Map<String, String>> executedTools = new ArrayList<>();
 
             // 1. 第一轮：带工具定义发给大模型
             List<Map<String, Object>> messages = new ArrayList<>();
@@ -121,6 +122,10 @@ public class AgentService {
                     log.info("Agent 调用工具: {} | 参数: {}", functionName, arguments);
 
                     String functionResult = executeFunction(functionName, arguments);
+                    Map<String, String> executedTool = new LinkedHashMap<>();
+                    executedTool.put("name", functionName);
+                    executedTool.put("result", functionResult);
+                    executedTools.add(executedTool);
 
                     Map<String, Object> toolResultMsg = new LinkedHashMap<>();
                     toolResultMsg.put("role", "tool");
@@ -131,16 +136,25 @@ public class AgentService {
 
                 // 4. 第二轮：把工具执行结果发回大模型，让它生成最终的自然语言回答
                 JSONObject secondResponse = callLlmRaw(messages);
-                if (secondResponse != null) {
-                    return secondResponse.getJSONArray("choices")
-                            .getJSONObject(0)
-                            .getJSONObject("message")
-                            .getString("content");
+                String secondAnswer = extractAssistantContent(secondResponse);
+                if (secondAnswer != null) {
+                    return secondAnswer;
                 }
+                log.warn("Agent 第二轮总结为空，question={}, secondResponse={}", userQuestion, secondResponse);
+
+                String fallbackAnswer = buildFallbackAnswer(executedTools);
+                if (!fallbackAnswer.isBlank()) {
+                    return fallbackAnswer;
+                }
+                return "抱歉，我暂时无法整理查询结果，请稍后再试。";
             }
 
             String content = assistantMessage.getString("content");
-            return content != null ? content : "抱歉，我暂时无法理解您的问题。";
+            if (content != null && !content.isBlank()) {
+                return content;
+            }
+            log.warn("Agent 首轮返回空内容，question={}, firstResponse={}", userQuestion, firstResponse);
+            return "抱歉，我暂时无法理解您的问题。";
 
         } catch (Exception e) {
             log.error("Agent 执行异常", e);
@@ -170,6 +184,158 @@ public class AgentService {
         }
     }
 
+    private String extractAssistantContent(JSONObject response) {
+        if (response == null) {
+            return null;
+        }
+        JSONArray choices = response.getJSONArray("choices");
+        if (choices == null || choices.isEmpty()) {
+            return null;
+        }
+        JSONObject firstChoice = choices.getJSONObject(0);
+        if (firstChoice == null) {
+            return null;
+        }
+        JSONObject message = firstChoice.getJSONObject("message");
+        if (message == null) {
+            return null;
+        }
+        String content = message.getString("content");
+        if (content == null || content.isBlank()) {
+            return null;
+        }
+        return content.trim();
+    }
+
+    private String buildFallbackAnswer(List<Map<String, String>> executedTools) {
+        if (executedTools == null || executedTools.isEmpty()) {
+            return "";
+        }
+        for (Map<String, String> executedTool : executedTools) {
+            String functionName = executedTool.get("name");
+            String functionResult = executedTool.get("result");
+            String fallbackAnswer = switch (functionName) {
+                case "query_all_stations", "query_station_by_keyword" -> summarizeStationList(functionResult);
+                case "query_station_detail" -> summarizeStationDetail(functionResult);
+                default -> "";
+            };
+            if (fallbackAnswer != null && !fallbackAnswer.isBlank()) {
+                return fallbackAnswer;
+            }
+        }
+        return "";
+    }
+
+    private String summarizeStationList(String json) {
+        if (json == null || json.isBlank()) {
+            return "";
+        }
+        if (!json.startsWith("[")) {
+            return json;
+        }
+        try {
+            JSONArray stations = JSON.parseArray(json);
+            if (stations == null || stations.isEmpty()) {
+                return "当前没有查到可用的充电站。";
+            }
+
+            int displayCount = Math.min(stations.size(), 3);
+            StringBuilder sb = new StringBuilder("我帮你查到以下充电站：\n");
+            for (int i = 0; i < displayCount; i++) {
+                JSONObject station = stations.getJSONObject(i);
+                String name = defaultText(station.getString("名称"), "未命名充电站");
+                String address = station.getString("地址");
+                Object available = station.get("当前可用桩数");
+                Object total = station.get("总桩数");
+                Object distance = station.get("距离(km)");
+
+                sb.append(i + 1).append(". ").append(name);
+                if (distance != null) {
+                    sb.append("，距离约").append(distance).append("km");
+                }
+                if (available != null || total != null) {
+                    sb.append("，可用桩 ")
+                            .append(available != null ? available : "?")
+                            .append("/")
+                            .append(total != null ? total : "?");
+                }
+                if (address != null && !address.isBlank()) {
+                    sb.append("，地址：").append(address);
+                }
+                if (i < displayCount - 1) {
+                    sb.append("\n");
+                }
+            }
+
+            if (stations.size() > displayCount) {
+                sb.append("\n还有 ").append(stations.size() - displayCount).append(" 个站点可选。");
+            }
+            sb.append("\n如果你想看某个站点的详细信息，可以继续告诉我站点名称或编号。");
+            return sb.toString();
+        } catch (Exception e) {
+            log.warn("解析站点列表工具结果失败", e);
+            return "";
+        }
+    }
+
+    private String summarizeStationDetail(String json) {
+        if (json == null || json.isBlank()) {
+            return "";
+        }
+        if (!json.startsWith("{")) {
+            return json;
+        }
+        try {
+            JSONObject station = JSON.parseObject(json);
+            StringBuilder sb = new StringBuilder();
+            sb.append(defaultText(station.getString("名称"), "目标充电站")).append(" 的详情如下：");
+            sb.append("\n地址：").append(defaultText(station.getString("地址"), "暂未提供"));
+
+            Object available = station.get("当前可用桩数");
+            Object total = station.get("总桩数");
+            if (available != null || total != null) {
+                sb.append("\n可用桩：")
+                        .append(available != null ? available : "?")
+                        .append("/")
+                        .append(total != null ? total : "?");
+            }
+
+            String hours = station.getString("营业时间");
+            if (hours != null && !hours.isBlank()) {
+                sb.append("\n营业时间：").append(hours);
+            }
+
+            String contact = station.getString("联系电话");
+            if (contact != null && !contact.isBlank()) {
+                sb.append("\n联系电话：").append(contact);
+            }
+
+            JSONArray piles = station.getJSONArray("充电桩详情");
+            if (piles != null && !piles.isEmpty()) {
+                int displayCount = Math.min(piles.size(), 3);
+                sb.append("\n部分充电桩状态：");
+                for (int i = 0; i < displayCount; i++) {
+                    JSONObject pile = piles.getJSONObject(i);
+                    sb.append("\n")
+                            .append(i + 1)
+                            .append(". ")
+                            .append(defaultText(pile.getString("桩编号"), "未编号"))
+                            .append("，")
+                            .append(defaultText(pile.getString("状态"), "未知状态"));
+                }
+            }
+
+            return sb.toString();
+        } catch (Exception e) {
+            log.warn("解析站点详情工具结果失败", e);
+            return "";
+        }
+    }
+
+    private String defaultText(String text, String fallback) {
+        return text != null && !text.isBlank() ? text : fallback;
+    }
+
     // ==================== 工具函数实现 ====================
 
     /**
@@ -180,7 +346,7 @@ public class AgentService {
         if (stations.isEmpty())
             return "当前没有可用的充电站";
 
-        return stationsToJson(stations);
+        return stationsToJson(stations, 5);
     }
 
     /**
@@ -194,7 +360,7 @@ public class AgentService {
         if (stations.isEmpty())
             return "没有找到包含 '" + keyword + "' 的充电站";
 
-        return stationsToJson(stations);
+        return stationsToJson(stations, 5);
     }
 
     /**
@@ -240,7 +406,7 @@ public class AgentService {
      * 将站点列表转为 JSON，支持按距离排序
      * 复用了前端 useLocation.js 中的 Haversine 公式，在 Java 中实现
      */
-    private String stationsToJson(List<ChargingStationDTO> stations) {
+    private String stationsToJson(List<ChargingStationDTO> stations, int maxResults) {
         Double userLat = currentLat.get();
         Double userLng = currentLng.get();
 
@@ -280,6 +446,10 @@ public class AgentService {
                     return -1;
                 return Double.compare(((Number) da).doubleValue(), ((Number) db).doubleValue());
             });
+        }
+
+        if (maxResults > 0 && result.size() > maxResults) {
+            result = new ArrayList<>(result.subList(0, maxResults));
         }
 
         return JSON.toJSONString(result);
