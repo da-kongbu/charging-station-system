@@ -24,7 +24,7 @@ export const useAuthStore = defineStore('auth', () => {
         localStorage.setItem('token', data.token)
         localStorage.setItem('user', JSON.stringify(user.value))
 
-        // 如果是管理员登录，自动检查并导入江苏省充电站
+        // 如果是管理员登录，自动检查并导入附近充电站
         if (data.role === 1) {
             // 延迟执行，不阻塞登录流程
             setTimeout(async () => {

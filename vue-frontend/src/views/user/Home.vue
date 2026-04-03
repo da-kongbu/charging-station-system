@@ -144,7 +144,7 @@ async function initMapWithMarkers() {
                 <p style="margin:0;font-size:12px;color:#666">${station.address || ''}</p>
                 <p style="margin:5px 0;font-size:12px;color:#00b894">📍 距离: ${station.distance || '?'} km</p>
                 <p style="margin:5px 0;font-size:12px">⚡ 充电桩: ${station.piles?.length || 0} 个</p>
-                <a href="#/station/${station.id}" style="color:#00b894;text-decoration:none;font-weight:bold">查看详情 →</a>
+                <a href="/station/${station.id}" style="color:#00b894;text-decoration:none;font-weight:bold">查看详情 →</a>
             </div>
         `
         
