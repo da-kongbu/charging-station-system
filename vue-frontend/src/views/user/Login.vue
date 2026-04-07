@@ -33,7 +33,7 @@ async function handleLogin() {
 
 <template>
   <div class="auth-page">
-    <v-card class="auth-card mx-auto" max-width="420" elevation="12" rounded="lg">
+    <v-card class="auth-card mx-auto" width="520" max-width="90vw" elevation="12" rounded="lg">
       <v-card-text class="pa-8">
         <div class="text-center mb-6">
           <v-icon size="48" color="primary">mdi-lightning-bolt</v-icon>

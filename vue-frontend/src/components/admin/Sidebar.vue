@@ -1,9 +1,10 @@
 <script setup>
-import { RouterLink, useRoute } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 
 const authStore = useAuthStore()
 const route = useRoute()
+const router = useRouter()
 
 const menuItems = [
   { path: '/admin/dashboard', icon: 'mdi-view-dashboard', label: '仪表盘' },
@@ -14,6 +15,7 @@ const menuItems = [
 
 function logout() {
   authStore.logout()
+  router.push('/admin/login')
 }
 </script>
 

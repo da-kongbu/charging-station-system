@@ -72,7 +72,7 @@ public class OrderService {
         BigDecimal chargingFee = BigDecimal.ZERO;
         BigDecimal electricityRate = spot.getServiceFee() != null
                 ? spot.getServiceFee()
-                : new BigDecimal("0.6");
+                : new BigDecimal("1.0");
 
         if (pile != null && pile.getPower() != null) {
             long durationMinutes = java.time.Duration.between(start, end).toMinutes();

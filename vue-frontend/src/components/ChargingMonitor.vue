@@ -19,6 +19,9 @@ const demoMode = ref(false)
 let demoInterval = null
 let connectionTimeout = null
 
+// 模块级别缓存，组件重新挂载也不会丢失进度
+const demoStateCache = new Map()
+
 watch(() => props.visible, (newVal) => {
   if (newVal) connectWebSocket()
   else { disconnectWebSocket(); stopDemo() }
@@ -27,34 +30,53 @@ watch(() => props.visible, (newVal) => {
 onUnmounted(() => { disconnectWebSocket(); stopDemo() })
 
 function connectWebSocket() {
+  // 重置状态
+  connected.value = false
+  socketError.value = null
+
   try {
     const socket = new SockJS('http://localhost:8080/ws')
     stompClient.value = new Client({
       webSocketFactory: () => socket,
       debug: (str) => console.log('STOMP: ' + str),
-      reconnectDelay: 5000,
+      reconnectDelay: 0, // 禁用自动重连，避免与演示模式冲突
       onConnect: (frame) => {
         connected.value = true
         socketError.value = null
-        demoMode.value = false
         clearTimeout(connectionTimeout)
+        stopDemo() // 连接成功，停止演示模式
         stompClient.value.subscribe(`/topic/charging/${props.reservationId}`, (message) => {
           chargingData.value = JSON.parse(message.body)
         })
       },
-      onStompError: () => startDemoFallback(),
-      onWebSocketClose: () => { connected.value = false; if (!demoMode.value) startDemoFallback() },
-      onWebSocketError: () => startDemoFallback()
+      onStompError: (frame) => {
+        console.error('STOMP error:', frame.headers?.['message'])
+        startDemoFallback()
+      },
+      onWebSocketClose: () => {
+        connected.value = false
+        // 只在未处于演示模式时启动回退
+        if (!demoMode.value) startDemoFallback()
+      },
+      onWebSocketError: () => {
+        if (!demoMode.value) startDemoFallback()
+      }
     })
     stompClient.value.activate()
-    connectionTimeout = setTimeout(() => { if (!connected.value) startDemoFallback() }, 5000)
-  } catch (e) { startDemoFallback() }
+    connectionTimeout = setTimeout(() => {
+      if (!connected.value && !demoMode.value) startDemoFallback()
+    }, 5000)
+  } catch (e) {
+    console.error('WebSocket init error:', e)
+    startDemoFallback()
+  }
 }
 
-const demoStateCache = new Map()
-
 function startDemoFallback() {
-  if (demoMode.value) return
+  // 先清理旧的 interval，防止重复
+  if (demoInterval) { clearInterval(demoInterval); demoInterval = null }
+  if (connectionTimeout) { clearTimeout(connectionTimeout); connectionTimeout = null }
+
   demoMode.value = true
   connected.value = true
   socketError.value = null
@@ -65,6 +87,7 @@ function startDemoFallback() {
   const baseVoltage = POWER_KW > 50 ? 750 : 220
   const baseCurrent = (POWER_KW * 1000) / baseVoltage
 
+  // 复用缓存状态，保持进度连续
   let state = demoStateCache.get(rid)
   if (!state) {
     const startSoc = POWER_KW > 50 ? (10 + Math.floor(Math.random() * 20)) : (20 + Math.floor(Math.random() * 30))
@@ -105,7 +128,10 @@ function stopDemo() {
 }
 
 function disconnectWebSocket() {
-  if (stompClient.value) { stompClient.value.deactivate(); stompClient.value = null }
+  if (stompClient.value) {
+    stompClient.value.deactivate()
+    stompClient.value = null
+  }
   connected.value = false
   chargingData.value = null
 }

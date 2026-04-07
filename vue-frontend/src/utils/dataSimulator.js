@@ -63,7 +63,7 @@ export function enrichStationData(station) {
                 spotCode: `${pileCode}-${j + 1}`,
                 spotType: isDC ? 'LARGE' : 'STANDARD',
                 pricePerHour: isDC ? 2.5 : 1.5,
-                serviceFee: 0.8,
+                serviceFee: isDC ? 1.0 : 0.8,
                 status: status
             });
         }

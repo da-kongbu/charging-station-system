@@ -153,7 +153,7 @@ public class DataInitializer implements CommandLineRunner {
                 // 根据充电桩类型差异化定价
                 boolean isFast = "DC_FAST".equals(pile.getPileType());
                 BigDecimal hourlyRate = isFast ? new BigDecimal("1.5") : new BigDecimal("0.5");
-                BigDecimal electricityRate = isFast ? new BigDecimal("1.2") : new BigDecimal("0.6");
+                BigDecimal electricityRate = isFast ? new BigDecimal("1.0") : new BigDecimal("0.8");
 
                 ParkingSpot spot = ParkingSpot.builder()
                                 .pile(pile)
