@@ -1,32 +1,67 @@
 <template>
-  <!-- 悬浮 AI 助手按钮 -->
-  <div class="ai-chat-fab" @click="toggleChat" :class="{ active: isOpen }">
-    <span v-if="!isOpen" class="fab-icon">🤖</span>
-    <span v-else class="fab-icon">✕</span>
-    <span v-if="!isOpen" class="fab-label">智充助手</span>
-  </div>
+  <!-- FAB -->
+  <v-btn
+    v-if="!isOpen"
+    icon
+    color="primary"
+    size="large"
+    position="fixed"
+    location="bottom end"
+    class="ma-6"
+    elevation="6"
+    @click="toggleChat"
+  >
+    <v-badge v-if="messages.length > 0" dot color="error" floating>
+      <v-icon>mdi-robot</v-icon>
+    </v-badge>
+    <v-icon v-else>mdi-robot</v-icon>
+    <v-tooltip activator="parent" location="left">智充助手</v-tooltip>
+  </v-btn>
 
-  <!-- 聊天窗口 -->
+  <v-btn
+    v-else
+    icon
+    color="grey-darken-2"
+    size="large"
+    position="fixed"
+    location="bottom end"
+    class="ma-6"
+    elevation="4"
+    @click="toggleChat"
+  >
+    <v-icon>mdi-close</v-icon>
+  </v-btn>
+
+  <!-- Chat Window -->
   <Transition name="chat-slide">
-    <div v-if="isOpen" class="ai-chat-window">
-      <!-- 头部 -->
-      <div class="chat-header">
-        <div class="chat-header-info">
-          <div class="chat-avatar">🤖</div>
+    <v-card
+      v-if="isOpen"
+      rounded="lg"
+      elevation="12"
+      width="400"
+      class="chat-window"
+    >
+      <!-- Header -->
+      <div class="chat-header pa-4 d-flex align-center justify-space-between">
+        <div class="d-flex align-center ga-3">
+          <v-avatar color="rgba(255,255,255,0.25)" size="36">
+            <v-icon color="white">mdi-robot</v-icon>
+          </v-avatar>
           <div>
-            <div class="chat-title">智充 AI 助手</div>
-            <div class="chat-subtitle">基于 DeepSeek 大模型 · RAG 知识增强</div>
+            <div class="text-subtitle-2 font-weight-bold text-white">智充 AI 助手</div>
+            <div class="text-caption" style="color:rgba(255,255,255,0.8)">基于 DeepSeek 大模型 · RAG 知识增强</div>
           </div>
         </div>
-        <button class="chat-close" @click="toggleChat">✕</button>
+        <v-btn icon="mdi-close" variant="text" size="small" color="white" @click="toggleChat" />
       </div>
 
-      <!-- 消息列表 -->
+      <!-- Messages -->
       <div class="chat-messages" ref="messagesContainer">
-        <!-- 欢迎消息 -->
         <div class="message assistant">
-          <div class="message-avatar">🤖</div>
-          <div class="message-bubble">
+          <v-avatar size="30" color="grey-lighten-3" class="flex-shrink-0">
+            <v-icon size="18" color="primary">mdi-robot</v-icon>
+          </v-avatar>
+          <div class="message-bubble assistant-bubble">
             您好！我是<strong>智充助手</strong>，专为充电桩用户服务的 AI 客服。<br>
             您可以问我：<br>
             • 充电桩怎么使用？<br>
@@ -35,47 +70,42 @@
           </div>
         </div>
 
-        <!-- 历史消息 -->
-        <div
-          v-for="(msg, index) in messages"
-          :key="index"
-          class="message"
-          :class="msg.role"
-        >
-          <div class="message-avatar">{{ msg.role === 'user' ? '👤' : '🤖' }}</div>
-          <div class="message-bubble" v-html="formatMessage(msg.content)"></div>
+        <div v-for="(msg, index) in messages" :key="index" class="message" :class="msg.role">
+          <v-avatar v-if="msg.role === 'user'" size="30" color="primary" class="flex-shrink-0">
+            <v-icon size="18" color="white">mdi-account</v-icon>
+          </v-avatar>
+          <v-avatar v-else size="30" color="grey-lighten-3" class="flex-shrink-0">
+            <v-icon size="18" color="primary">mdi-robot</v-icon>
+          </v-avatar>
+          <div class="message-bubble" :class="msg.role === 'user' ? 'user-bubble' : 'assistant-bubble'" v-html="formatMessage(msg.content)" />
         </div>
 
-        <!-- AI 正在输入指示器 -->
         <div v-if="isLoading" class="message assistant">
-          <div class="message-avatar">🤖</div>
-          <div class="message-bubble typing">
-            <span class="dot"></span>
-            <span class="dot"></span>
-            <span class="dot"></span>
+          <v-avatar size="30" color="grey-lighten-3" class="flex-shrink-0">
+            <v-icon size="18" color="primary">mdi-robot</v-icon>
+          </v-avatar>
+          <div class="message-bubble assistant-bubble typing">
+            <span class="dot"></span><span class="dot"></span><span class="dot"></span>
           </div>
         </div>
       </div>
 
-      <!-- 输入区域 -->
-      <div class="chat-input-area">
-        <input
+      <!-- Input -->
+      <div class="pa-3 border-t">
+        <v-text-field
           v-model="inputText"
-          @keydown.enter="sendMessage"
+          variant="outlined"
+          density="compact"
+          rounded="pill"
           placeholder="输入您的问题..."
+          hide-details
           :disabled="isLoading"
-          class="chat-input"
-          ref="chatInput"
+          @keydown.enter="sendMessage"
+          append-inner-icon="mdi-send"
+          @click:append-inner="sendMessage"
         />
-        <button
-          @click="sendMessage"
-          :disabled="isLoading || !inputText.trim()"
-          class="chat-send-btn"
-        >
-          {{ isLoading ? '⏳' : '➤' }}
-        </button>
       </div>
-    </div>
+    </v-card>
   </Transition>
 </template>
 
@@ -88,42 +118,27 @@ const isLoading = ref(false)
 const inputText = ref('')
 const messages = ref([])
 const messagesContainer = ref(null)
-const chatInput = ref(null)
 
 const API_BASE = 'http://localhost:8080/api/ai'
-
-// Agent 模式开关：true = 使用 Agent（能查数据库），false = 使用 SSE 流式
 const useAgentMode = ref(true)
 
-// 获取用户位置（复用已有的 useLocation composable）
 const { userLocation, getUserLocation } = useLocation()
 
-onMounted(async () => {
-  // 页面加载时就获取位置，避免用户发消息时再等
-  await getUserLocation()
-})
+onMounted(async () => { await getUserLocation() })
 
 function toggleChat() {
   isOpen.value = !isOpen.value
-  if (isOpen.value) {
-    nextTick(() => chatInput.value?.focus())
-  }
+  if (isOpen.value) nextTick(() => {})
 }
 
-/** 滚动到底部 */
 function scrollToBottom() {
   nextTick(() => {
-    if (messagesContainer.value) {
-      messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
-    }
+    if (messagesContainer.value) messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
   })
 }
 
-/** 轻量 Markdown → HTML 渲染 */
 function formatMessage(text) {
   if (!text) return ''
-
-  // 按行拆分处理
   const lines = text.split('\n')
   let html = ''
   let inRootList = false
@@ -131,40 +146,11 @@ function formatMessage(text) {
   let orderedItemOpen = false
   let inNestedList = false
 
-  const closeRootList = () => {
-    if (inRootList) {
-      html += '</ul>'
-      inRootList = false
-    }
-  }
-
-  const closeNestedList = () => {
-    if (inNestedList) {
-      html += '</ul>'
-      inNestedList = false
-    }
-  }
-
-  const closeOrderedItem = () => {
-    closeNestedList()
-    if (orderedItemOpen) {
-      html += '</li>'
-      orderedItemOpen = false
-    }
-  }
-
-  const closeOrderedList = () => {
-    closeOrderedItem()
-    if (inOrderedList) {
-      html += '</ol>'
-      inOrderedList = false
-    }
-  }
-
-  const closeAllLists = () => {
-    closeRootList()
-    closeOrderedList()
-  }
+  const closeRootList = () => { if (inRootList) { html += '</ul>'; inRootList = false } }
+  const closeNestedList = () => { if (inNestedList) { html += '</ul>'; inNestedList = false } }
+  const closeOrderedItem = () => { closeNestedList(); if (orderedItemOpen) { html += '</li>'; orderedItemOpen = false } }
+  const closeOrderedList = () => { closeOrderedItem(); if (inOrderedList) { html += '</ol>'; inOrderedList = false } }
+  const closeAllLists = () => { closeRootList(); closeOrderedList() }
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
@@ -172,91 +158,29 @@ function formatMessage(text) {
     const orderedMatch = trimmed.match(/^(\d+)\.\s+(.+)/)
     const unorderedMatch = trimmed.match(/^[\-\*]\s+(.+)/)
 
-    // 1. 标题 ### → <h4>，## → <h3>，# → <h2>
-    if (/^### (.+)/.test(trimmed)) {
-      closeAllLists()
-      html += `<strong style="font-size:1em;display:block;margin:8px 0 4px">${trimmed.replace(/^### /, '')}</strong>`
-      continue
-    }
-    if (/^## (.+)/.test(trimmed)) {
-      closeAllLists()
-      html += `<strong style="font-size:1.05em;display:block;margin:10px 0 4px">${trimmed.replace(/^## /, '')}</strong>`
-      continue
-    }
+    if (/^### (.+)/.test(trimmed)) { closeAllLists(); html += `<strong style="font-size:1em;display:block;margin:8px 0 4px">${trimmed.replace(/^### /, '')}</strong>`; continue }
+    if (/^## (.+)/.test(trimmed)) { closeAllLists(); html += `<strong style="font-size:1.05em;display:block;margin:10px 0 4px">${trimmed.replace(/^## /, '')}</strong>`; continue }
 
-    // 2. 空行：列表内部跳过，普通段落增加间距
-    if (trimmed === '') {
-      if (inRootList || inOrderedList || orderedItemOpen || inNestedList) {
-        continue
-      }
-      html += '<div style="height:8px"></div>'
-      continue
-    }
+    if (trimmed === '') { if (inRootList || inOrderedList || orderedItemOpen || inNestedList) continue; html += '<div style="height:8px"></div>'; continue }
 
-    // 3. 有序列表 1. xxx
-    if (orderedMatch) {
-      closeRootList()
-      if (!inOrderedList) {
-        html += '<ol style="margin:4px 0;padding-left:22px">'
-        inOrderedList = true
-      } else {
-        closeOrderedItem()
-      }
-      html += `<li>${inlineMd(orderedMatch[2])}`
-      orderedItemOpen = true
-      continue
-    }
+    if (orderedMatch) { closeRootList(); if (!inOrderedList) { html += '<ol style="margin:4px 0;padding-left:22px">'; inOrderedList = true } else closeOrderedItem(); html += `<li>${inlineMd(orderedMatch[2])}`; orderedItemOpen = true; continue }
+    if (unorderedMatch) { const content = unorderedMatch[1]; if (orderedItemOpen) { if (!inNestedList) { html += '<ul style="margin:6px 0 2px;padding-left:18px">'; inNestedList = true } html += `<li>${inlineMd(content)}</li>` } else { closeOrderedList(); if (!inRootList) { html += '<ul style="margin:4px 0;padding-left:18px">'; inRootList = true } html += `<li>${inlineMd(content)}</li>` } continue }
 
-    // 4. 无序列表 - xxx 或 * xxx
-    if (unorderedMatch) {
-      const content = unorderedMatch[1]
-      if (orderedItemOpen) {
-        if (!inNestedList) {
-          html += '<ul style="margin:6px 0 2px;padding-left:18px">'
-          inNestedList = true
-        }
-        html += `<li>${inlineMd(content)}</li>`
-      } else {
-        closeOrderedList()
-        if (!inRootList) {
-          html += '<ul style="margin:4px 0;padding-left:18px">'
-          inRootList = true
-        }
-        html += `<li>${inlineMd(content)}</li>`
-      }
-      continue
-    }
-
-    // 5. 普通文本行
-    if (orderedItemOpen) {
-      closeNestedList()
-      html += `<div style="margin:4px 0">${inlineMd(trimmed)}</div>`
-      continue
-    }
-
-    closeAllLists()
-    html += `<div>${inlineMd(trimmed)}</div>`
+    if (orderedItemOpen) { closeNestedList(); html += `<div style="margin:4px 0">${inlineMd(trimmed)}</div>`; continue }
+    closeAllLists(); html += `<div>${inlineMd(trimmed)}</div>`
   }
-
-  // 收尾：关闭未关闭的列表
   closeAllLists()
-
   return html
 }
 
-/** 行内 Markdown：**加粗**、*斜体* */
 function inlineMd(text) {
-  return text
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+  return text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\*(.+?)\*/g, '<em>$1</em>')
 }
 
-/** 发送消息 */
 async function sendMessage() {
   const question = inputText.value.trim()
   if (!question || isLoading.value) return
 
-  // 1. 添加用户消息
   messages.value.push({ role: 'user', content: question })
   inputText.value = ''
   isLoading.value = true
@@ -264,26 +188,15 @@ async function sendMessage() {
 
   try {
     if (useAgentMode.value) {
-      // ===== Agent 模式：带位置信息请求 =====
       const encodedQuestion = encodeURIComponent(question)
       let url = `${API_BASE}/agent?question=${encodedQuestion}`
-
-      // 把用户 GPS 位置传给后端，后端会按距离排序
-      if (userLocation.value) {
-        url += `&lat=${userLocation.value.latitude}&lng=${userLocation.value.longitude}`
-      }
-
+      if (userLocation.value) url += `&lat=${userLocation.value.latitude}&lng=${userLocation.value.longitude}`
       const response = await fetch(url)
       const json = await response.json()
       isLoading.value = false
-      const answer = (typeof json.data === 'string' && json.data.trim())
-        ? json.data
-        : (json.code === 200
-            ? '抱歉，智充助手暂时没有生成有效回复，请稍后再试。'
-            : (json.message || '暂无回复'))
+      const answer = (typeof json.data === 'string' && json.data.trim()) ? json.data : (json.code === 200 ? '抱歉，智充助手暂时没有生成有效回复，请稍后再试。' : (json.message || '暂无回复'))
       messages.value.push({ role: 'assistant', content: answer })
     } else {
-      // ===== 流式模式：提前创建空气泡用于逐字追加 =====
       const aiMessageIndex = messages.value.length
       messages.value.push({ role: 'assistant', content: '' })
       await streamChat(question, aiMessageIndex)
@@ -297,11 +210,9 @@ async function sendMessage() {
   }
 }
 
-/** SSE 流式聊天 */
 async function streamChat(question, aiMessageIndex) {
   const encodedQuestion = encodeURIComponent(question)
   const response = await fetch(`${API_BASE}/stream?question=${encodedQuestion}`)
-
   if (!response.ok) throw new Error(`请求失败: ${response.status}`)
 
   const reader = response.body.getReader()
@@ -311,148 +222,41 @@ async function streamChat(question, aiMessageIndex) {
   while (true) {
     const { done, value } = await reader.read()
     if (done) break
-
     buffer += decoder.decode(value, { stream: true })
     const lines = buffer.split('\n')
     buffer = lines.pop()
-
     for (const line of lines) {
       if (line.startsWith('data:')) {
-        const data = line.slice(5)
         if (isLoading.value) isLoading.value = false
-        messages.value[aiMessageIndex].content += data
+        messages.value[aiMessageIndex].content += line.slice(5)
         scrollToBottom()
       }
     }
   }
-
-  if (buffer.startsWith('data:')) {
-    messages.value[aiMessageIndex].content += buffer.slice(5)
-  }
+  if (buffer.startsWith('data:')) messages.value[aiMessageIndex].content += buffer.slice(5)
   isLoading.value = false
 }
 
-// 监听消息变化自动滚动
 watch(messages, scrollToBottom, { deep: true })
 </script>
 
 <style scoped>
-/* ========== 悬浮按钮 ========== */
-.ai-chat-fab {
+.chat-window {
   position: fixed;
-  bottom: 30px;
-  right: 30px;
-  background: linear-gradient(135deg, #00b894, #00cec9);
-  color: white;
-  border-radius: 50px;
-  padding: 14px 22px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  box-shadow: 0 6px 20px rgba(0, 184, 148, 0.4);
-  transition: all 0.3s ease;
-  z-index: 9998;
-  user-select: none;
-}
-
-.ai-chat-fab:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 10px 30px rgba(0, 184, 148, 0.5);
-}
-
-.ai-chat-fab.active {
-  border-radius: 50%;
-  padding: 14px;
-  background: linear-gradient(135deg, #636e72, #2d3436);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-}
-
-.fab-icon {
-  font-size: 1.3rem;
-  line-height: 1;
-}
-
-.fab-label {
-  font-size: 0.9rem;
-  font-weight: 600;
-  letter-spacing: 0.5px;
-}
-
-/* ========== 聊天窗口 ========== */
-.ai-chat-window {
-  position: fixed;
-  bottom: 100px;
-  right: 30px;
-  width: 400px;
+  bottom: 96px;
+  right: 24px;
+  z-index: 9999;
   height: 560px;
-  background: #ffffff;
-  border-radius: 16px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  z-index: 9999;
 }
 
-/* ========== 头部 ========== */
 .chat-header {
   background: linear-gradient(135deg, #00b894, #00cec9);
-  color: white;
-  padding: 16px 18px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-shrink: 0;
 }
 
-.chat-header-info {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.chat-avatar {
-  font-size: 1.6rem;
-  width: 40px;
-  height: 40px;
-  background: rgba(255, 255, 255, 0.25);
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.chat-title {
-  font-weight: 700;
-  font-size: 1rem;
-}
-
-.chat-subtitle {
-  font-size: 0.72rem;
-  opacity: 0.85;
-  margin-top: 2px;
-}
-
-.chat-close {
-  background: rgba(255, 255, 255, 0.2);
-  border: none;
-  color: white;
-  font-size: 1.1rem;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s;
-}
-
-.chat-close:hover {
-  background: rgba(255, 255, 255, 0.4);
-}
-
-/* ========== 消息区域 ========== */
 .chat-messages {
   flex: 1;
   overflow-y: auto;
@@ -461,70 +265,47 @@ watch(messages, scrollToBottom, { deep: true })
   display: flex;
   flex-direction: column;
   gap: 14px;
+  min-height: 0;
 }
 
-.chat-messages::-webkit-scrollbar {
-  width: 4px;
-}
+.chat-messages::-webkit-scrollbar { width: 4px; }
+.chat-messages::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; }
 
-.chat-messages::-webkit-scrollbar-thumb {
-  background: #ccc;
-  border-radius: 4px;
-}
-
-/* ========== 消息气泡 ========== */
 .message {
   display: flex;
   gap: 10px;
   align-items: flex-start;
   animation: fadeInUp 0.3s ease;
 }
-
-.message.user {
-  flex-direction: row-reverse;
-}
-
-.message-avatar {
-  font-size: 1.3rem;
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  background: white;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
-  flex-shrink: 0;
-}
+.message.user { flex-direction: row-reverse; }
 
 .message-bubble {
   max-width: 75%;
-  padding: 12px 16px;
+  padding: 10px 14px;
   border-radius: 16px;
-  font-size: 0.9rem;
+  font-size: 0.875rem;
   line-height: 1.6;
   word-break: break-word;
 }
 
-.message.assistant .message-bubble {
+.assistant-bubble {
   background: white;
   color: #2d3436;
   border-bottom-left-radius: 4px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 
-.message.user .message-bubble {
+.user-bubble {
   background: linear-gradient(135deg, #00b894, #00cec9);
   color: white;
   border-bottom-right-radius: 4px;
 }
 
-/* ========== 打字指示器 ========== */
 .typing {
   display: flex;
   align-items: center;
   gap: 5px;
-  padding: 14px 20px !important;
+  padding: 12px 18px !important;
 }
 
 .dot {
@@ -534,116 +315,28 @@ watch(messages, scrollToBottom, { deep: true })
   border-radius: 50%;
   animation: bounce 1.4s infinite ease-in-out;
 }
-
-.dot:nth-child(2) {
-  animation-delay: 0.2s;
-}
-
-.dot:nth-child(3) {
-  animation-delay: 0.4s;
-}
+.dot:nth-child(2) { animation-delay: 0.2s; }
+.dot:nth-child(3) { animation-delay: 0.4s; }
 
 @keyframes bounce {
-  0%, 80%, 100% {
-    transform: scale(0.6);
-    opacity: 0.4;
-  }
-  40% {
-    transform: scale(1);
-    opacity: 1;
-  }
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  40% { transform: scale(1); opacity: 1; }
 }
 
-/* ========== 输入区域 ========== */
-.chat-input-area {
-  padding: 14px 16px;
-  background: white;
-  border-top: 1px solid #eee;
-  display: flex;
-  gap: 10px;
-}
-
-.chat-input {
-  flex: 1;
-  padding: 12px 16px;
-  border: 2px solid #e8e8e8;
-  border-radius: 25px;
-  font-size: 0.9rem;
-  outline: none;
-  transition: all 0.3s;
-}
-
-.chat-input:focus {
-  border-color: #00b894;
-  box-shadow: 0 0 0 3px rgba(0, 184, 148, 0.1);
-}
-
-.chat-input:disabled {
-  background: #f5f5f5;
-}
-
-.chat-send-btn {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  border: none;
-  background: linear-gradient(135deg, #00b894, #00cec9);
-  color: white;
-  font-size: 1.2rem;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.3s;
-  flex-shrink: 0;
-}
-
-.chat-send-btn:hover:not(:disabled) {
-  transform: scale(1.08);
-  box-shadow: 0 4px 12px rgba(0, 184, 148, 0.4);
-}
-
-.chat-send-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* ========== 动画 ========== */
-.chat-slide-enter-active,
-.chat-slide-leave-active {
+.chat-slide-enter-active, .chat-slide-leave-active {
   transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
-
-.chat-slide-enter-from,
-.chat-slide-leave-to {
+.chat-slide-enter-from, .chat-slide-leave-to {
   opacity: 0;
   transform: translateY(20px) scale(0.95);
 }
 
 @keyframes fadeInUp {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
-/* ========== 响应式：手机端全屏聊天 ========== */
 @media (max-width: 480px) {
-  .ai-chat-window {
-    width: 100%;
-    height: 100%;
-    bottom: 0;
-    right: 0;
-    border-radius: 0;
-  }
-
-  .ai-chat-fab {
-    bottom: 20px;
-    right: 20px;
-  }
+  .v-card { width: 100% !important; height: 100% !important; position: fixed !important; bottom: 0 !important; right: 0 !important; margin: 0 !important; border-radius: 0 !important; }
 }
 </style>

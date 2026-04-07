@@ -36,3 +36,5 @@ src/main/resources/application-secret.yml
 # Custom Ignores
 *.tar.gz
 interview_questions*.md
+*.md
+!README.md

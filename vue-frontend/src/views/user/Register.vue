@@ -15,6 +15,7 @@ const form = ref({
 })
 const loading = ref(false)
 const error = ref('')
+const showPassword = ref(false)
 
 async function handleRegister() {
   if (!form.value.username || !form.value.password) {
@@ -37,8 +38,6 @@ async function handleRegister() {
       phone: form.value.phone,
       carPlate: form.value.carPlate
     })
-    
-    // Auto login after registration
     await authStore.login(form.value.username, form.value.password)
     router.push('/')
   } catch (err) {
@@ -51,51 +50,79 @@ async function handleRegister() {
 
 <template>
   <div class="auth-page">
-    <div class="auth-card">
-      <div class="auth-header">
-        <span class="auth-icon">⚡</span>
-        <h1>用户注册</h1>
-        <p>创建账号，开始便捷充电之旅</p>
-      </div>
-
-      <form @submit.prevent="handleRegister">
-        <div class="form-group">
-          <label>用户名 *</label>
-          <input v-model="form.username" type="text" class="form-control" placeholder="请输入用户名" />
+    <v-card class="auth-card mx-auto" max-width="440" elevation="12" rounded="lg">
+      <v-card-text class="pa-8">
+        <div class="text-center mb-6">
+          <v-icon size="48" color="primary">mdi-lightning-bolt</v-icon>
+          <h1 class="text-h5 mt-3 mb-1">用户注册</h1>
+          <p class="text-body-2 text-grey">创建账号，开始便捷充电之旅</p>
         </div>
 
-        <div class="form-group">
-          <label>密码 *</label>
-          <input v-model="form.password" type="password" class="form-control" placeholder="请输入密码" />
-        </div>
+        <v-alert v-if="error" type="error" variant="tonal" closable class="mb-4" @click:close="error = ''">
+          {{ error }}
+        </v-alert>
 
-        <div class="form-group">
-          <label>确认密码 *</label>
-          <input v-model="form.confirmPassword" type="password" class="form-control" placeholder="请再次输入密码" />
-        </div>
+        <v-form @submit.prevent="handleRegister">
+          <v-text-field
+            v-model="form.username"
+            label="用户名"
+            variant="outlined"
+            prepend-inner-icon="mdi-account"
+            placeholder="请输入用户名"
+            class="mb-2"
+          />
+          <v-text-field
+            v-model="form.password"
+            label="密码"
+            variant="outlined"
+            prepend-inner-icon="mdi-lock"
+            :append-inner-icon="showPassword ? 'mdi-eye-off' : 'mdi-eye'"
+            :type="showPassword ? 'text' : 'password'"
+            placeholder="请输入密码"
+            class="mb-2"
+            @click:append-inner="showPassword = !showPassword"
+          />
+          <v-text-field
+            v-model="form.confirmPassword"
+            label="确认密码"
+            variant="outlined"
+            prepend-inner-icon="mdi-lock-check"
+            type="password"
+            placeholder="请再次输入密码"
+            class="mb-2"
+          />
+          <v-text-field
+            v-model="form.phone"
+            label="手机号（选填）"
+            variant="outlined"
+            prepend-inner-icon="mdi-phone"
+            placeholder="请输入手机号"
+            class="mb-2"
+          />
+          <v-text-field
+            v-model="form.carPlate"
+            label="车牌号（选填）"
+            variant="outlined"
+            prepend-inner-icon="mdi-car"
+            placeholder="请输入车牌号"
+            class="mb-4"
+          />
 
-        <div class="form-group">
-          <label>手机号</label>
-          <input v-model="form.phone" type="text" class="form-control" placeholder="请输入手机号（选填）" />
-        </div>
+          <v-btn type="submit" color="primary" size="large" block :loading="loading">
+            注册
+          </v-btn>
+        </v-form>
+      </v-card-text>
 
-        <div class="form-group">
-          <label>车牌号</label>
-          <input v-model="form.carPlate" type="text" class="form-control" placeholder="请输入车牌号（选填）" />
-        </div>
+      <v-divider />
 
-        <p v-if="error" class="error-text">{{ error }}</p>
-
-        <button type="submit" class="btn btn-primary btn-block" :disabled="loading">
-          {{ loading ? '注册中...' : '注册' }}
-        </button>
-      </form>
-
-      <div class="auth-footer">
-        <p>已有账号？<RouterLink to="/login">立即登录</RouterLink></p>
-        <RouterLink to="/" class="back-link">← 返回首页</RouterLink>
-      </div>
-    </div>
+      <v-card-actions class="justify-center pa-4">
+        <span class="text-body-2 text-grey">已有账号？</span>
+        <v-btn to="/login" variant="text" color="primary" size="small">立即登录</v-btn>
+        <v-spacer />
+        <v-btn to="/" variant="text" size="small" prepend-icon="mdi-arrow-left">返回首页</v-btn>
+      </v-card-actions>
+    </v-card>
   </div>
 </template>
 
@@ -107,64 +134,5 @@ async function handleRegister() {
   justify-content: center;
   background: linear-gradient(135deg, #00b894 0%, #0984e3 100%);
   padding: 20px;
-}
-
-.auth-card {
-  background: white;
-  padding: 40px;
-  border-radius: 16px;
-  width: 100%;
-  max-width: 420px;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.2);
-}
-
-.auth-header {
-  text-align: center;
-  margin-bottom: 30px;
-}
-
-.auth-icon {
-  font-size: 3rem;
-}
-
-.auth-header h1 {
-  font-size: 1.6rem;
-  margin: 10px 0 5px;
-  color: var(--text);
-}
-
-.auth-header p {
-  color: var(--text-light);
-}
-
-.btn-block {
-  width: 100%;
-  margin-top: 10px;
-  padding: 14px;
-}
-
-.error-text {
-  color: var(--danger);
-  font-size: 0.9rem;
-  margin-bottom: 10px;
-}
-
-.auth-footer {
-  text-align: center;
-  margin-top: 25px;
-}
-
-.auth-footer p {
-  color: var(--text-light);
-  margin-bottom: 10px;
-}
-
-.auth-footer a {
-  color: var(--primary);
-  font-weight: 500;
-}
-
-.back-link {
-  font-size: 0.9rem;
 }
 </style>

@@ -14,102 +14,47 @@ const distanceDisplay = computed(() => {
 </script>
 
 <template>
-  <RouterLink 
+  <v-card
     :to="`/station/${station.id}`"
-    class="station-card card"
+    hover
+    rounded="lg"
+    class="station-card d-flex flex-column"
   >
-    <div class="station-image">
-      <span class="station-icon">🔌</span>
+    <!-- Image placeholder -->
+    <div class="station-image d-flex align-center justify-center">
+      <v-icon size="56" color="white">mdi-ev-station</v-icon>
     </div>
-    <div class="station-info">
-      <h3>{{ station.name }}</h3>
-      <p class="station-address">📍 {{ station.city }} {{ station.district }} {{ station.address }}</p>
-      <div class="station-meta">
-        <span v-if="distanceDisplay" class="badge badge-info">📍 {{ distanceDisplay }}</span>
-        <span class="badge badge-success">营业中</span>
-        <span class="pile-count">{{ station.piles?.length || 0 }} 个充电桩</span>
+
+    <v-card-text class="pb-2 flex-grow-1 d-flex flex-column">
+      <div class="text-subtitle-1 font-weight-bold mb-1 text-truncate">{{ station.name }}</div>
+      <div class="text-body-2 text-grey-darken-1 mb-3 line-clamp-2">
+        <v-icon size="16" class="mr-1">mdi-map-marker</v-icon>
+        {{ station.city }} {{ station.district }} {{ station.address }}
       </div>
-    </div>
-  </RouterLink>
+
+      <v-spacer />
+
+      <div class="d-flex align-center justify-space-between">
+        <div class="d-flex ga-1">
+          <v-chip v-if="distanceDisplay" size="small" color="secondary" variant="tonal" prepend-icon="mdi-map-marker-distance">
+            {{ distanceDisplay }}
+          </v-chip>
+          <v-chip size="small" color="success" variant="tonal">
+            营业中
+          </v-chip>
+        </div>
+        <span class="text-caption text-grey">{{ station.piles?.length || 0 }} 个充电桩</span>
+      </div>
+    </v-card-text>
+  </v-card>
 </template>
 
 <style scoped>
 .station-card {
-  cursor: pointer;
-  transition: all 0.3s ease;
-  overflow: hidden;
-  display: block;
-  text-decoration: none;
-  color: inherit;
-  background: white;
-  border-radius: 12px;
-  box-shadow: 0 5px 15px rgba(0,0,0,0.05);
-  margin-bottom: 20px;
+  transition: transform 0.2s ease;
 }
-
-.station-card:hover {
-  transform: translateY(-5px);
-  box-shadow: 0 10px 25px rgba(0,0,0,0.1);
-}
-
 .station-image {
   height: 120px;
-  background: linear-gradient(135deg, #dfe6e9 0%, #b2bec3 100%);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin: -20px -20px 15px -20px; /* Adjust based on parent padding if moved, but here it's self-contained style from previous card class */
-  /* Re-adjusting for component context */
-  margin: 0;
-  border-radius: 12px 12px 0 0;
-}
-
-/* Card padding needs to be applied to content */
-.station-info {
-  padding: 15px;
-}
-
-.station-icon {
-  font-size: 3rem;
-}
-
-.station-info h3 {
-  font-size: 1.1rem;
-  margin-bottom: 8px;
-  color: var(--text);
-}
-
-.station-address {
-  font-size: 0.9rem;
-  color: var(--text-light);
-  margin-bottom: 12px;
-}
-
-.station-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.pile-count {
-  font-size: 0.85rem;
-  color: var(--text-light);
-}
-
-.badge {
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 12px;
-  font-weight: 500;
-}
-
-.badge-info {
-  background-color: #e3f2fd;
-  color: #1976d2;
-}
-
-.badge-success {
-  background-color: #e8f5e9;
-  color: #2ecc71;
+  background: linear-gradient(135deg, #00b894 0%, #00cec9 100%);
 }
 </style>

@@ -6,10 +6,10 @@ const authStore = useAuthStore()
 const route = useRoute()
 
 const menuItems = [
-  { path: '/admin/dashboard', icon: '📊', label: '仪表盘' },
-  { path: '/admin/stations', icon: '🏢', label: '充电站管理' },
-  { path: '/admin/users', icon: '👥', label: '用户管理' },
-  { path: '/admin/orders', icon: '📋', label: '订单管理' },
+  { path: '/admin/dashboard', icon: 'mdi-view-dashboard', label: '仪表盘' },
+  { path: '/admin/stations', icon: 'mdi-ev-station', label: '充电站管理' },
+  { path: '/admin/users', icon: 'mdi-account-group', label: '用户管理' },
+  { path: '/admin/orders', icon: 'mdi-clipboard-list', label: '订单管理' },
 ]
 
 function logout() {
@@ -18,81 +18,39 @@ function logout() {
 </script>
 
 <template>
-  <aside class="sidebar">
-    <div class="sidebar-logo">
-      <span class="icon">⚡</span>
-      <h2>绿能充电管理</h2>
+  <v-navigation-drawer
+    permanent
+    :width="240"
+    color="grey-darken-3"
+    theme="dark"
+  >
+    <!-- Logo -->
+    <div class="pa-5 text-center border-b border-white border-opacity-10">
+      <v-icon size="40" color="primary">mdi-lightning-bolt</v-icon>
+      <div class="text-subtitle-1 font-weight-bold mt-2">绿能充电管理</div>
     </div>
 
-    <nav class="sidebar-menu">
-      <RouterLink 
-        v-for="item in menuItems" 
-        :key="item.path" 
+    <!-- Menu -->
+    <v-list density="comfortable" nav class="mt-2">
+      <v-list-item
+        v-for="item in menuItems"
+        :key="item.path"
         :to="item.path"
-        :class="{ active: route.path === item.path }"
-      >
-        <span class="icon">{{ item.icon }}</span>
-        <span>{{ item.label }}</span>
-      </RouterLink>
-      <a href="#" @click.prevent="logout">
-        <span class="icon">🚪</span>
-        <span>退出登录</span>
-      </a>
-    </nav>
-  </aside>
+        :prepend-icon="item.icon"
+        :title="item.label"
+        :active="route.path === item.path"
+        color="primary"
+        rounded="lg"
+        class="mx-2 mb-1"
+      />
+      <v-divider class="my-3 mx-4" />
+      <v-list-item
+        @click="logout"
+        prepend-icon="mdi-logout"
+        title="退出登录"
+        rounded="lg"
+        class="mx-2"
+      />
+    </v-list>
+  </v-navigation-drawer>
 </template>
-
-<style scoped>
-.sidebar {
-  width: 240px;
-  background: #2d3436;
-  color: white;
-  position: fixed;
-  height: 100vh;
-  overflow-y: auto;
-}
-
-.sidebar-logo {
-  text-align: center;
-  padding: 25px 20px;
-  border-bottom: 1px solid rgba(255,255,255,0.1);
-}
-
-.sidebar-logo .icon {
-  font-size: 2.5rem;
-}
-
-.sidebar-logo h2 {
-  font-size: 1.1rem;
-  margin-top: 10px;
-  font-weight: 600;
-}
-
-.sidebar-menu {
-  padding: 15px 0;
-}
-
-.sidebar-menu a {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 25px;
-  color: rgba(255,255,255,0.7);
-  text-decoration: none;
-  transition: all 0.3s;
-  border-left: 3px solid transparent;
-}
-
-.sidebar-menu a:hover,
-.sidebar-menu a.active {
-  background: rgba(255,255,255,0.1);
-  color: white;
-  border-left-color: var(--primary);
-}
-
-.sidebar-menu .icon {
-  font-size: 1.2rem;
-  width: 24px;
-  text-align: center;
-}
-</style>

@@ -9,6 +9,7 @@ const authStore = useAuthStore()
 const form = ref({ username: '', password: '' })
 const loading = ref(false)
 const error = ref('')
+const showPassword = ref(false)
 
 async function handleLogin() {
   if (!form.value.username || !form.value.password) {
@@ -21,7 +22,7 @@ async function handleLogin() {
 
   try {
     const data = await authStore.login(form.value.username, form.value.password)
-    
+
     if (data.role !== 1) {
       error.value = '您没有管理员权限'
       authStore.logout()
@@ -39,32 +40,51 @@ async function handleLogin() {
 
 <template>
   <div class="login-page">
-    <div class="login-card">
-      <div class="login-header">
-        <span class="icon">🔐</span>
-        <h1>管理后台</h1>
-        <p>请使用管理员账号登录</p>
-      </div>
-
-      <form @submit.prevent="handleLogin">
-        <div class="form-group">
-          <label>用户名</label>
-          <input v-model="form.username" type="text" class="form-control" placeholder="请输入用户名" />
+    <v-card class="login-card mx-auto" max-width="400" elevation="12" rounded="lg">
+      <v-card-text class="pa-8">
+        <div class="text-center mb-6">
+          <v-icon size="48" color="grey-darken-3">mdi-shield-lock</v-icon>
+          <h1 class="text-h5 mt-3 mb-1">管理后台</h1>
+          <p class="text-body-2 text-grey">请使用管理员账号登录</p>
         </div>
-        <div class="form-group">
-          <label>密码</label>
-          <input v-model="form.password" type="password" class="form-control" placeholder="请输入密码" />
-        </div>
-        <p v-if="error" class="error-text">{{ error }}</p>
-        <button type="submit" class="btn btn-block" :disabled="loading">
-          {{ loading ? '登录中...' : '登录管理后台' }}
-        </button>
-      </form>
 
-      <div class="login-footer">
-        <RouterLink to="/">← 返回用户端</RouterLink>
-      </div>
-    </div>
+        <v-alert v-if="error" type="error" variant="tonal" closable class="mb-4" @click:close="error = ''">
+          {{ error }}
+        </v-alert>
+
+        <v-form @submit.prevent="handleLogin">
+          <v-text-field
+            v-model="form.username"
+            label="用户名"
+            variant="outlined"
+            prepend-inner-icon="mdi-account"
+            placeholder="请输入用户名"
+            class="mb-2"
+          />
+          <v-text-field
+            v-model="form.password"
+            label="密码"
+            variant="outlined"
+            prepend-inner-icon="mdi-lock"
+            :append-inner-icon="showPassword ? 'mdi-eye-off' : 'mdi-eye'"
+            :type="showPassword ? 'text' : 'password'"
+            placeholder="请输入密码"
+            class="mb-4"
+            @click:append-inner="showPassword = !showPassword"
+          />
+
+          <v-btn type="submit" color="grey-darken-3" size="large" block :loading="loading">
+            登录管理后台
+          </v-btn>
+        </v-form>
+      </v-card-text>
+
+      <v-divider />
+
+      <v-card-actions class="justify-center pa-4">
+        <v-btn to="/" variant="text" size="small" prepend-icon="mdi-arrow-left">返回用户端</v-btn>
+      </v-card-actions>
+    </v-card>
   </div>
 </template>
 
@@ -76,60 +96,5 @@ async function handleLogin() {
   justify-content: center;
   background: linear-gradient(135deg, #2d3436 0%, #636e72 100%);
   padding: 20px;
-}
-
-.login-card {
-  background: white;
-  padding: 40px;
-  border-radius: 16px;
-  width: 100%;
-  max-width: 400px;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-}
-
-.login-header {
-  text-align: center;
-  margin-bottom: 30px;
-}
-
-.login-header .icon {
-  font-size: 3rem;
-}
-
-.login-header h1 {
-  font-size: 1.5rem;
-  margin: 10px 0 5px;
-}
-
-.login-header p {
-  color: var(--text-light);
-}
-
-.btn-block {
-  width: 100%;
-  padding: 14px;
-  background: #2d3436;
-  color: white;
-  margin-top: 10px;
-}
-
-.btn-block:hover {
-  background: #1e2526;
-}
-
-.error-text {
-  color: var(--danger);
-  font-size: 0.9rem;
-  margin-bottom: 10px;
-}
-
-.login-footer {
-  text-align: center;
-  margin-top: 25px;
-}
-
-.login-footer a {
-  color: var(--text-light);
-  font-size: 0.9rem;
 }
 </style>

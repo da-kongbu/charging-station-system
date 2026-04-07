@@ -28,17 +28,15 @@ import java.util.Random;
 import java.util.stream.Collectors;
 
 /**
- * 充电站点管理服务
- * 
- * 作用：提供关于寻找场地、维护场地、新建场站的一系列核心操作。
- * 特别包含了一个能够智能根据空闲生成“假预约时间窗”的生成器，用于撑起前端丰富的数据展示盘。
+ * 充电站管理服务
+ *
+ * 作用：提供充电站查询、维护和演示数据生成等能力。
  */
-@Slf4j // 开启自动日志对象注入
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ChargingStationService {
 
-    // 注入一系列的持久层(Dao)仓储接口
     private final ChargingStationRepository stationRepository;
     private final ChargingPileRepository pileRepository;
     private final ParkingSpotRepository spotRepository;
@@ -52,7 +50,7 @@ public class ChargingStationService {
      */
     public List<ChargingStationDTO> findAll() {
         return stationRepository.findAll().stream()
-                .map(this::convertToDTO) // 实体对象不能直接丢前端，全部转一遍 DTO
+                .map(this::convertToDTO)
                 .collect(Collectors.toList());
     }
 
@@ -82,26 +80,23 @@ public class ChargingStationService {
     }
 
     /**
-     * 新增一个大型充电场站及附属所有设备 (核心表单录入)
-     * 利用了基于 Spring AOP 的事务机制控制，只要任何一边数据库炸了，全部回滚
+     * 创建充电站及其关联设备
      */
     @Transactional
     public ChargingStation create(ChargingStation station) {
-        // [关键] 内存中建立双向关联对象树，确保 JPA 能够级联顺利保存 (CascadeType.ALL)
         if (station.getPiles() != null) {
             for (ChargingPile pile : station.getPiles()) {
-                pile.setStation(station); // 给桩指认所在的站
+                pile.setStation(station);
                 if (pile.getParkingSpots() != null) {
                     for (ParkingSpot spot : pile.getParkingSpots()) {
-                        spot.setPile(pile); // 给坑指认归属的桩
+                        spot.setPile(pile);
                     }
                 }
             }
         }
-        // 只要 save 老大，附注的小兵由于 cascade 都会跟着被存进数据库不同表里
         ChargingStation saved = stationRepository.save(station);
 
-        // === 特色补充逻辑：由于是 demo 新创建没啥数据，自动为每个新车位捏造一点随机预约数据(甘特图用) ===
+        // 新站点创建后补充演示数据，便于前端展示预约时间轴。
         generateReservationsForStation(saved);
 
         return saved;
@@ -109,11 +104,9 @@ public class ChargingStationService {
 
     @Transactional
     public ChargingStation update(Long id, ChargingStation updateData) {
-        // 查出原始站
         ChargingStation station = stationRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("充电站不存在"));
 
-        // 分别替换局部字段
         if (updateData.getName() != null)
             station.setName(updateData.getName());
         if (updateData.getAddress() != null)
@@ -141,27 +134,22 @@ public class ChargingStationService {
         return pileRepository.findByStationId(stationId);
     }
 
-    // =============================================
-    // 模拟预约历史数据生成的脚本逻辑区
-    // 主要是为了解决展示"时间条甘特图"没有数据不好看的问题
-    // =============================================
+    // 演示数据生成
 
     /**
-     * 辅助脚本：为新创建的站点的所有车位填充伪造的时间进度条
+     * 为新创建站点的车位生成演示用预约数据
      */
     private void generateReservationsForStation(ChargingStation station) {
-        // 找个背锅侠，用系统隐藏用户或者管理员来认领这些伪造的占位订单
         User mockUser = userRepository.findByUsername("_system")
                 .orElse(userRepository.findAll().stream()
                         .filter(u -> u.getRole() == -1)
                         .findFirst().orElse(null));
 
         if (mockUser == null) {
-            log.warn("没有可用虚拟系统伪用户，跳过预约数据生成");
+            log.warn("未找到演示用户，跳过预约数据生成");
             return;
         }
 
-        // 把站底下的柱子和坑全拿出来，跑循环，给每个坑都随机染上点儿预定颜色
         List<ChargingPile> piles = pileRepository.findByStationId(station.getId());
         for (ChargingPile pile : piles) {
             List<ParkingSpot> spots = spotRepository.findByPileId(pile.getId());
@@ -169,11 +157,11 @@ public class ChargingStationService {
                 simulateDailyReservations(spot, mockUser);
             }
         }
-        log.info("已成功为新站点 [{}] 生成一堆用于测试的随机排期预约数据", station.getName());
+        log.info("已为新站点 [{}] 生成演示用预约数据", station.getName());
     }
 
     /**
-     * 针对单独一个车位制造历史排期轨迹
+     * 为单个车位生成演示用预约记录
      */
     private void simulateDailyReservations(ParkingSpot spot, User user) {
         LocalDateTime now = LocalDateTime.now();
@@ -181,34 +169,28 @@ public class ChargingStationService {
 
         double chance = random.nextDouble();
 
-        // 模拟当前时点这根桩的状态大沙盘
         if (chance < 0.4) {
-            // 人还没到，显示预约中(黄)：安排一条未来 10-31 分钟后起算的时段记录
             LocalDateTime start = now.plusMinutes(10 + random.nextInt(21));
             LocalDateTime end = start.plusMinutes(60);
             saveReservation(user, spot, start, end, 1, dailyReservations);
-            spot.setStatus(2); // 2: 改变车位状态为预约中锁止
+            spot.setStatus(2);
         } else if (chance < 0.8) {
-            // 车已经在冲了，显示占用中(红)：安排一条开始时间在过去，结束时间在未来的段
             LocalDateTime start = now.minusMinutes(30 + random.nextInt(60));
             LocalDateTime end = now.plusMinutes(15 + random.nextInt(46));
             saveReservation(user, spot, start, end, 2, dailyReservations);
-            spot.setStatus(3); // 3: 改变车位状态为通电工作占用中
+            spot.setStatus(3);
         } else {
-            // 没人鸟它
-            spot.setStatus(1); // 1: 绿色空闲
+            spot.setStatus(1);
         }
-        spotRepository.save(spot); // 同步把车位的底色保存了
+        spotRepository.save(spot);
 
-        // 接着往这根柱子上再叠加几个今天其余时间点的历史或未来干扰项定标针
         LocalDate today = LocalDate.now();
         for (int i = 0; i < 2; i++) {
-            int randomHour = 8 + random.nextInt(14); // 早8点到晚22点
+            int randomHour = 8 + random.nextInt(14);
             LocalDateTime start = LocalDateTime.of(today, LocalTime.of(randomHour, 0))
                     .plusMinutes(random.nextInt(60));
             LocalDateTime end = start.plusMinutes(60 + random.nextInt(60));
 
-            // 防撞击检测！如果在排这根柱子的时候和前面定好的时间有相交重叠的摩擦区间，就不要了直接丢弃
             boolean conflict = false;
             for (Reservation existing : dailyReservations) {
                 if (start.isBefore(existing.getEndTime()) && end.isAfter(existing.getStartTime())) {
@@ -216,19 +198,17 @@ public class ChargingStationService {
                     break;
                 }
             }
-            // 不要覆盖住现在当前的空闲状态
             if (spot.getStatus() == 1 && start.isBefore(now) && end.isAfter(now)) {
                 conflict = true;
             }
-            // 实在算计到没撞上，才存入库
             if (!conflict) {
                 int status;
                 if (end.isBefore(now)) {
-                    status = 3; // 那是过去时，设为已完成
+                    status = 3;
                 } else if (start.isAfter(now)) {
-                    status = 1; // 还没到那会，设为排队预约中
+                    status = 1;
                 } else {
-                    status = 2; // 刚好压中了
+                    status = 2;
                 }
                 saveReservation(user, spot, start, end, status, dailyReservations);
             }
@@ -246,7 +226,6 @@ public class ChargingStationService {
                 .carPlate("京A" + random.nextInt(99999))
                 .createdAt(LocalDateTime.now().minusHours(1))
                 .build();
-        // 稍微严谨点，如果是占用或结束，得有实际打卡到达时间
         if (status == 2 || status == 3) {
             res.setActualArrivalTime(start.plusMinutes(2));
         }
@@ -254,26 +233,19 @@ public class ChargingStationService {
         list.add(res);
     }
 
-    // =============================================
-    // DTO 数据遮罩转换层区
-    // 主要是把各种关联循环引用全部打平装箱成干净的结构
-    // =============================================
+    // DTO 转换
 
     private ChargingStationDTO convertToDTO(ChargingStation station) {
         List<ChargingPile> piles = pileRepository.findByStationId(station.getId());
 
-        // 递归降维套娃打包柱子
         List<ChargingPileDTO> pileDTOs = piles.stream()
                 .map(this::convertPileToDTO)
                 .collect(Collectors.toList());
 
-        // 判断空闲桩数：一个桩算"可用"需要满足两个条件：
-        // 1. 桩本身物理状态正常 (status == 1)
-        // 2. 桩底下至少有一个车位 DTO 的动态状态 == 1（空闲，已经过预约数据动态计算）
         int availableCount = (int) pileDTOs.stream()
-                .filter(p -> p.getStatus() == 1) // 桩物理状态正常
+                .filter(p -> p.getStatus() == 1)
                 .filter(p -> p.getParkingSpots() != null
-                        && p.getParkingSpots().stream().anyMatch(s -> s.getStatus() == 1)) // 底下有空闲车位
+                        && p.getParkingSpots().stream().anyMatch(s -> s.getStatus() == 1))
                 .count();
 
         return ChargingStationDTO.builder()
@@ -289,7 +261,7 @@ public class ChargingStationService {
                 .description(station.getDescription())
                 .status(station.getStatus())
                 .pileCount(piles.size())
-                .availablePileCount(availableCount) // <= 非常关键的数据，展示大字用
+                .availablePileCount(availableCount)
                 .piles(pileDTOs)
                 .build();
     }
@@ -297,7 +269,6 @@ public class ChargingStationService {
     private ChargingPileDTO convertPileToDTO(ChargingPile pile) {
         List<ParkingSpot> spots = spotRepository.findByPileId(pile.getId());
 
-        // 递归降维套娃打包车位
         List<ParkingSpotDTO> spotDTOs = spots.stream()
                 .map(this::convertSpotToDTO)
                 .collect(Collectors.toList());
@@ -312,7 +283,7 @@ public class ChargingStationService {
                 .current(pile.getCurrent())
                 .brand(pile.getBrand())
                 .connectorType(pile.getConnectorType())
-                .status(pile.getStatus()) // 直接使用数据库原始状态，不做动态覆盖
+                .status(pile.getStatus())
                 .parkingSpots(spotDTOs)
                 .build();
     }
@@ -320,8 +291,7 @@ public class ChargingStationService {
     private ParkingSpotDTO convertSpotToDTO(ParkingSpot spot) {
         int dynamicStatus = spot.getStatus();
 
-        // 只有在车位物理状态正常（1-空闲）的情况下，才去判断未来两小时内有没有人预约
-        // 防止把原本“故障(0)”的车位强行显示成“空闲(1)”或“预约中(2)”
+        // 仅对物理状态正常的车位计算动态预约状态。
         if (dynamicStatus == 1) {
             LocalDateTime now = LocalDateTime.now();
             LocalDateTime twoHoursLater = now.plusHours(2);
@@ -329,7 +299,7 @@ public class ChargingStationService {
                     spot.getId(), now, twoHoursLater);
 
             if (!upcomingReservations.isEmpty()) {
-                dynamicStatus = 2; // 2-预约中/锁定
+                dynamicStatus = 2;
             }
         }
 
@@ -340,7 +310,7 @@ public class ChargingStationService {
                 .spotType(spot.getSpotType())
                 .pricePerHour(spot.getPricePerHour())
                 .serviceFee(spot.getServiceFee())
-                .status(dynamicStatus) // 基于原有状态 + 预约数据计算出的最终状态
+                .status(dynamicStatus)
                 .build();
     }
 }

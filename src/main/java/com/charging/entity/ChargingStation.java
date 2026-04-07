@@ -84,7 +84,7 @@ public class ChargingStation {
 
     /**
      * 场站级别整体当前的运营营业状态：
-     * 0-闭站停业歇业中，1-正常对外开放营业中，2-整体场站线路维护中
+     * 0-暂停营业，1-正常营业，2-维护中
      */
     @Column(nullable = false)
     @Builder.Default

@@ -1,14 +1,15 @@
 <script setup>
 import { RouterView } from 'vue-router'
 import AiChat from '@/components/AiChat.vue'
+import Header from '@/components/common/Header.vue'
 </script>
 
 <template>
-  <RouterView />
-  <!-- AI 智能客服悬浮按钮，全局可见 -->
-  <AiChat />
+  <v-app>
+    <Header />
+    <v-main>
+      <router-view />
+      <AiChat />
+    </v-main>
+  </v-app>
 </template>
-
-<style>
-/* Global app styles handled in style.css */
-</style>

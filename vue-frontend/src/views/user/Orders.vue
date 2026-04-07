@@ -1,14 +1,13 @@
 <script setup>
 import { ref, onMounted } from 'vue'
-import Header from '@/components/common/Header.vue'
 import { orderApi } from '@/api'
 
 const orders = ref([])
 const loading = ref(true)
+const snackbar = ref({ show: false, message: '', color: 'success' })
+const confirmDialog = ref({ show: false, orderId: null })
 
-onMounted(async () => {
-  await loadOrders()
-})
+onMounted(async () => { await loadOrders() })
 
 async function loadOrders() {
   loading.value = true
@@ -22,25 +21,26 @@ async function loadOrders() {
   }
 }
 
-async function handlePay(id) {
-  if (!confirm('确认支付？')) return
+async function handlePay() {
+  const id = confirmDialog.value.orderId
+  confirmDialog.value.show = false
   try {
     await orderApi.pay(id, 'WECHAT')
-    alert('支付成功！')
+    snackbar.value = { show: true, message: '支付成功！', color: 'success' }
     await loadOrders()
   } catch (error) {
-    alert(error.response?.data?.message || '支付失败')
+    snackbar.value = { show: true, message: error.response?.data?.message || '支付失败', color: 'error' }
   }
 }
 
-function getStatusInfo(status) {
-  const map = {
-    0: { text: '已取消', class: 'badge-danger' },
-    1: { text: '待支付', class: 'badge-warning' },
-    2: { text: '已支付', class: 'badge-success' },
-    3: { text: '已完成', class: 'badge-success' }
-  }
-  return map[status] || { text: '未知', class: '' }
+function getStatusColor(status) {
+  const map = { 0: 'error', 1: 'warning', 2: 'success', 3: 'info' }
+  return map[status] || 'grey'
+}
+
+function getStatusText(status) {
+  const map = { 0: '已取消', 1: '待支付', 2: '已支付', 3: '已完成' }
+  return map[status] || '未知'
 }
 
 function formatDate(str) {
@@ -50,127 +50,74 @@ function formatDate(str) {
 </script>
 
 <template>
-  <div class="page">
-    <Header />
-    
-    <main class="main container">
-      <h1 class="page-title">我的订单</h1>
+  <div>
+    <v-container class="py-6">
+      <h1 class="text-h5 font-weight-bold mb-6">
+        <v-icon class="mr-2">mdi-receipt-text</v-icon>我的订单
+      </h1>
 
-      <div v-if="loading" class="text-center mt-2">
-        <div class="spinner"></div>
+      <div v-if="loading" class="text-center py-8">
+        <v-progress-circular indeterminate color="primary" size="48" />
       </div>
 
-      <div v-else-if="orders.length === 0" class="empty-state">
-        <p>暂无订单记录</p>
-        <RouterLink to="/" class="btn btn-primary">去预约充电</RouterLink>
+      <div v-else-if="orders.length === 0" class="text-center py-12">
+        <v-icon size="64" color="grey-lighten-1">mdi-receipt-text</v-icon>
+        <p class="text-grey mt-4 mb-4">暂无订单记录</p>
+        <v-btn to="/" color="primary" prepend-icon="mdi-ev-station">去预约充电</v-btn>
       </div>
 
-      <div v-else class="orders-list">
-        <div v-for="o in orders" :key="o.id" class="order-card card">
-          <div class="order-header">
-            <span class="order-no">{{ o.orderNo }}</span>
-            <span class="badge" :class="getStatusInfo(o.status).class">
-              {{ getStatusInfo(o.status).text }}
-            </span>
-          </div>
+      <div v-else>
+        <v-card v-for="o in orders" :key="o.id" class="mb-4" rounded="lg">
+          <v-card-text class="pa-5">
+            <div class="d-flex align-center justify-space-between mb-4">
+              <span class="text-subtitle-2 font-weight-bold">{{ o.orderNo }}</span>
+              <v-chip :color="getStatusColor(o.status)" size="small" variant="tonal">
+                {{ getStatusText(o.status) }}
+              </v-chip>
+            </div>
 
-          <div class="order-body">
-            <div class="fee-row">
-              <span>停车费</span>
-              <span>¥{{ o.parkingFee }}</span>
-            </div>
-            <div class="fee-row">
-              <span>服务费</span>
-              <span>¥{{ o.serviceFee }}</span>
-            </div>
-            <div class="fee-row">
-              <span>充电费</span>
-              <span>¥{{ o.chargingFee }}</span>
-            </div>
-            <div class="fee-row total">
-              <span>总计</span>
-              <span>¥{{ o.totalAmount }}</span>
-            </div>
-            <p class="order-time">创建时间：{{ formatDate(o.createdAt) }}</p>
-          </div>
+            <v-table density="compact" class="bg-transparent">
+              <tbody>
+                <tr><td class="text-grey">停车费</td><td class="text-right">¥{{ o.parkingFee }}</td></tr>
+                <tr><td class="text-grey">服务费</td><td class="text-right">¥{{ o.serviceFee }}</td></tr>
+                <tr><td class="text-grey">充电费</td><td class="text-right">¥{{ o.chargingFee }}</td></tr>
+                <tr>
+                  <td class="font-weight-bold">总计</td>
+                  <td class="text-right text-primary font-weight-bold text-subtitle-2">¥{{ o.totalAmount }}</td>
+                </tr>
+              </tbody>
+            </v-table>
 
-          <div class="order-actions" v-if="o.status === 1">
-            <button class="btn btn-primary" @click="handlePay(o.id)">立即支付</button>
-          </div>
-        </div>
+            <div class="text-caption text-grey mt-3">创建时间：{{ formatDate(o.createdAt) }}</div>
+          </v-card-text>
+
+          <template v-if="o.status === 1">
+            <v-divider />
+            <v-card-actions class="pa-3">
+              <v-btn color="primary" variant="flat" block @click="confirmDialog = { show: true, orderId: o.id }">
+                立即支付
+              </v-btn>
+            </v-card-actions>
+          </template>
+        </v-card>
       </div>
-    </main>
+    </v-container>
+
+    <!-- Pay Confirm Dialog -->
+    <v-dialog v-model="confirmDialog.show" max-width="360">
+      <v-card rounded="lg">
+        <v-card-title>确认支付</v-card-title>
+        <v-card-text>确认使用微信支付？</v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="confirmDialog.show = false">取消</v-btn>
+          <v-btn color="primary" variant="flat" @click="handlePay">确认支付</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <v-snackbar v-model="snackbar.show" :color="snackbar.color" :timeout="3000" location="top">
+      {{ snackbar.message }}
+    </v-snackbar>
   </div>
 </template>
-
-<style scoped>
-.main {
-  padding: 30px 20px;
-}
-
-.page-title {
-  font-size: 1.8rem;
-  margin-bottom: 25px;
-}
-
-.empty-state {
-  text-align: center;
-  padding: 60px 0;
-  color: var(--text-light);
-}
-
-.empty-state p {
-  margin-bottom: 20px;
-  font-size: 1.1rem;
-}
-
-.order-card {
-  margin-bottom: 15px;
-}
-
-.order-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 15px;
-  padding-bottom: 15px;
-  border-bottom: 1px solid #eee;
-}
-
-.order-no {
-  font-weight: 600;
-  color: var(--text);
-}
-
-.fee-row {
-  display: flex;
-  justify-content: space-between;
-  padding: 8px 0;
-  color: var(--text-light);
-}
-
-.fee-row.total {
-  font-weight: 600;
-  font-size: 1.1rem;
-  color: var(--primary);
-  border-top: 1px dashed #eee;
-  margin-top: 10px;
-  padding-top: 15px;
-}
-
-.order-time {
-  font-size: 0.85rem;
-  color: var(--text-light);
-  margin-top: 15px;
-}
-
-.order-actions {
-  margin-top: 15px;
-  padding-top: 15px;
-  border-top: 1px solid #eee;
-}
-
-.order-actions .btn {
-  width: 100%;
-}
-</style>

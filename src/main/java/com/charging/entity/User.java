@@ -1,5 +1,6 @@
 package com.charging.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.*;
@@ -32,6 +33,7 @@ public class User {
     /**
      * 登录密码（数据库中必须存放哈希加密后的摘要，如 BCrypt 产物）
      */
+    @JsonIgnore
     @Column(nullable = false)
     private String password;
 
@@ -61,7 +63,7 @@ public class User {
 
     /**
      * 核心权限控制标志位：
-     * 0-可以下单的普通老百姓，1-可以登录后台管理端的老板或物业
+     * 0-普通用户，1-管理员
      */
     @Column(nullable = false)
     @Builder.Default
