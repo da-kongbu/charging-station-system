@@ -1,14 +1,19 @@
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue'
 import StationCard from '@/components/business/StationCard.vue'
-import { stationApi } from '@/api'
+import api, { stationApi } from '@/api'
 import { useLocation } from '@/composables/useLocation'
 import { useBaiduMap } from '@/composables/useBaiduMap'
+import { autoImportNearbyStations } from '@/services/autoImport'
 
 const stations = ref([])
 const loading = ref(true)
 const searchKeyword = ref('')
 const viewMode = ref('list')
+
+const importStatus = ref('idle') // idle | importing | done | skipped
+const importProgress = ref('')
+const importedCount = ref(0)
 
 const { userLocation, getUserLocation, calculateDistance } = useLocation()
 const { mapInstance, initMap, addMarker, setViewport } = useBaiduMap('map-container')
@@ -23,6 +28,35 @@ async function loadStations() {
   try {
     await getUserLocation()
 
+    // 检查当前用户是否已完成首次导入
+    const userStr = localStorage.getItem('user')
+    const user = userStr ? JSON.parse(userStr) : {}
+    const importKey = user.id ? `import_done_${user.id}` : null
+    const hasImported = importKey ? localStorage.getItem(importKey) : null
+
+    // 已登录且未导入过 → 触发自动导入
+    if (user.id && !hasImported) {
+      importStatus.value = 'importing'
+      importProgress.value = '正在准备搜索附近充电站...'
+
+      try {
+        const count = await autoImportNearbyStations(
+          api,
+          (msg) => { importProgress.value = msg }
+        )
+        importedCount.value = count
+        importStatus.value = 'done'
+        if (importKey) localStorage.setItem(importKey, 'true')
+      } catch (err) {
+        console.error('[Home] 导入失败:', err)
+        importStatus.value = 'skipped'
+        if (importKey) localStorage.setItem(importKey, 'true')
+      }
+    } else {
+      importStatus.value = 'skipped'
+    }
+
+    // 加载站点列表
     const res = await stationApi.getAll()
     let rawStations = res.data.data || []
 
@@ -163,11 +197,26 @@ async function initMapWithMarkers() {
         </v-btn-toggle>
       </div>
 
-      <div v-if="loading" class="text-center py-8">
-        <v-progress-circular indeterminate color="primary" size="48" />
+      <!-- 首次导入加载界面 -->
+      <div v-if="loading && importStatus === 'importing'" class="text-center py-12">
+        <v-progress-circular indeterminate color="primary" size="64" />
+        <h3 class="text-h6 mt-4 mb-2">正在为您搜索附近充电站</h3>
+        <p class="text-body-2 text-grey">{{ importProgress }}</p>
+        <p class="text-caption text-grey mt-2">首次加载需要一些时间，请稍候...</p>
       </div>
 
       <template v-else>
+        <!-- 导入成功提示（独立于列表，不互斥） -->
+        <v-alert v-if="importStatus === 'done' && importedCount > 0" type="success" variant="tonal" closable class="mb-4">
+          已为您找到并导入 {{ importedCount }} 个附近充电站
+        </v-alert>
+
+        <!-- 普通加载 -->
+        <div v-if="loading" class="text-center py-8">
+          <v-progress-circular indeterminate color="primary" size="48" />
+        </div>
+
+        <template v-else>
         <div v-if="viewMode === 'map'" class="map-container">
           <div id="map-container" style="width:100%;height:500px;"></div>
         </div>
@@ -184,10 +233,11 @@ async function initMapWithMarkers() {
           </div>
         </template>
 
-        <div v-if="filteredStations.length === 0" class="text-center py-12">
+        <div v-if="filteredStations.length === 0 && !loading" class="text-center py-12">
           <v-icon size="64" color="grey-lighten-1">mdi-ev-station</v-icon>
           <p class="text-grey mt-4">暂无充电站数据</p>
         </div>
+        </template>
       </template>
     </v-container>
   </div>

@@ -84,6 +84,14 @@ public class ChargingStationService {
      */
     @Transactional
     public ChargingStation create(ChargingStation station) {
+        // 重复检测：同名同地址的站点不重复导入
+        Optional<ChargingStation> existing = stationRepository
+                .findByNameAndAddress(station.getName(), station.getAddress());
+        if (existing.isPresent()) {
+            log.info("充电站已存在，跳过: {}", station.getName());
+            return existing.get();
+        }
+
         if (station.getPiles() != null) {
             for (ChargingPile pile : station.getPiles()) {
                 pile.setStation(station);

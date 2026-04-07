@@ -41,6 +41,18 @@ public class ChargingStationController {
     }
 
     /**
+     * 导入充电站数据（已认证用户均可调用）
+     */
+    @PostMapping("/import")
+    @Operation(summary = "导入充电站数据")
+    public ResponseEntity<ApiResponse<ChargingStationDTO>> importStation(
+            @RequestBody ChargingStation station) {
+        ChargingStation created = stationService.create(station);
+        return ResponseEntity.ok(ApiResponse.success("充电站导入成功",
+                stationService.findById(created.getId()).orElse(null)));
+    }
+
+    /**
      * 获取充电站详情
      */
     @GetMapping("/{id}")

@@ -49,6 +49,7 @@ export default api
 export const stationApi = {
     getAll: () => api.get('/stations'),
     getById: (id) => api.get(`/stations/${id}`),
+    import: (data) => api.post('/stations/import', data),
 }
 
 export const reservationApi = {

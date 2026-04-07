@@ -16,7 +16,7 @@ const KEYWORDS = ['充电站', '特斯拉充电站', '国家电网充电站'] //
  * @param {Object} api - Axios实例
  * @returns {Promise<number>} 导入的站点数量
  */
-export async function autoImportNearbyStations(api) {
+export async function autoImportNearbyStations(api, onProgress) {
     console.log('[AutoImport] 开始检查周边充电站数据...')
 
     const { getUserLocation, calculateDistance } = useLocation()
@@ -24,9 +24,11 @@ export async function autoImportNearbyStations(api) {
 
     try {
         // 确保地图加载完成
+        if (onProgress) onProgress('正在加载地图服务...')
         await waitForMap()
 
         // 1. 获取用户位置
+        if (onProgress) onProgress('正在获取您的位置...')
         const location = await getUserLocation()
         if (!location) {
             console.warn('[AutoImport] 无法获取用户位置，跳过自动导入')
@@ -35,16 +37,12 @@ export async function autoImportNearbyStations(api) {
 
         console.log(`[AutoImport] 获取位置成功: ${location.longitude}, ${location.latitude}`)
 
-        // 2. 根据位置搜索并导入
-        // 注意：useLocation 返回的是 { longitude, latitude }
-        // 而 BMapGL 使用的是 { lng, lat }，需要转换一下，或者统一
-        // 百度地图通常使用 lng/lat
         const bMapLocation = {
             lng: location.longitude,
             lat: location.latitude
         }
 
-        return await importFromBaiduMap(api, bMapLocation, calculateDistance)
+        return await importFromBaiduMap(api, bMapLocation, calculateDistance, onProgress)
 
     } catch (error) {
         console.error('[AutoImport] 自动导入失败:', error)
@@ -55,7 +53,7 @@ export async function autoImportNearbyStations(api) {
 /**
  * 从百度地图API导入充电站数据
  */
-async function importFromBaiduMap(api, location, calculateDistanceFunc) {
+async function importFromBaiduMap(api, location, calculateDistanceFunc, onProgress) {
     if (typeof BMapGL === 'undefined') {
         console.error('[AutoImport] 百度地图API未加载')
         return 0
@@ -67,6 +65,7 @@ async function importFromBaiduMap(api, location, calculateDistanceFunc) {
 
     for (const keyword of KEYWORDS) {
         try {
+            if (onProgress) onProgress(`正在搜索"${keyword}"...`)
             const count = await searchAndImportNearby(keyword, center, importedNames, api, calculateDistanceFunc)
             totalImported += count
             console.log(`[AutoImport] 关键词"${keyword}"导入: ${count} 个`)
@@ -131,10 +130,11 @@ function searchAndImportNearby(keyword, center, importedNames, api, calculateDis
                 }
 
                 if (batchStations.length > 0) {
-                    await batchImportToBackend(batchStations, api)
+                    const imported = await batchImportToBackend(batchStations, api)
+                    resolve(imported)
+                } else {
+                    resolve(0)
                 }
-
-                resolve(newCount)
             }
         })
 
@@ -146,10 +146,11 @@ async function batchImportToBackend(stations, api) {
     let successCount = 0
     for (const station of stations) {
         try {
-            await api.post('/admin/stations', station)
+            await api.post('/stations/import', station)
             successCount++
+            console.log('[AutoImport] 导入成功:', station.name)
         } catch (error) {
-            // ignore
+            console.error('[AutoImport] 导入失败:', station.name, error.response?.status, error.response?.data || error.message)
         }
     }
     return successCount

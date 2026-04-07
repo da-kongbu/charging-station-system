@@ -62,6 +62,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         // 公开接口
                         .requestMatchers("/api/auth/**").permitAll()
+                        .requestMatchers("/api/stations/import").authenticated()
                         .requestMatchers("/api/stations/**").permitAll()
                         .requestMatchers("/api/public/**").permitAll()
                         // AI 智能客服（允许未登录用户使用）
