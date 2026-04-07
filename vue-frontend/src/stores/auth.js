@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import api from '@/api'
-import { autoImportJiangsuStations } from '@/services/autoImport'
+import { autoImportNearbyStations } from '@/services/autoImport'
 
 export const useAuthStore = defineStore('auth', () => {
     const token = ref(localStorage.getItem('token') || '')
@@ -30,7 +30,7 @@ export const useAuthStore = defineStore('auth', () => {
             setTimeout(async () => {
                 try {
                     console.log('[Auth] 管理员登录，检查充电站数据...')
-                    const count = await autoImportJiangsuStations(api)
+                    const count = await autoImportNearbyStations(api)
                     if (count > 0) {
                         console.log(`[Auth] 自动导入完成，共导入 ${count} 个充电站`)
                         // 强制刷新页面以显示新数据

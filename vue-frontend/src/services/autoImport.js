@@ -16,7 +16,7 @@ const KEYWORDS = ['充电站', '特斯拉充电站', '国家电网充电站'] //
  * @param {Object} api - Axios实例
  * @returns {Promise<number>} 导入的站点数量
  */
-export async function autoImportJiangsuStations(api) {
+export async function autoImportNearbyStations(api) {
     console.log('[AutoImport] 开始检查周边充电站数据...')
 
     const { getUserLocation, calculateDistance } = useLocation()
@@ -172,5 +172,5 @@ function sleep(ms) {
 }
 
 export default {
-    autoImportJiangsuStations
+    autoImportNearbyStations
 }
