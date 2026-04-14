@@ -55,6 +55,23 @@ public class ReservationService {
     }
 
     /**
+     * 供 Agent 预校验预约参数使用，避免先给用户展示"待确认"再在最终创建时失败。
+     */
+    public Optional<String> validateReservationRequest(Long spotId, LocalDateTime startTime, LocalDateTime endTime) {
+        if (spotId == null) {
+            return Optional.of("请提供车位ID");
+        }
+
+        ParkingSpot spot = parkingSpotRepository.findById(spotId)
+                .orElse(null);
+        if (spot == null) {
+            return Optional.of("车位不存在");
+        }
+
+        return validateReservationRequest(spot, spotId, startTime, endTime);
+    }
+
+    /**
      * 创建预约
      */
     @Transactional
@@ -66,25 +83,10 @@ public class ReservationService {
         ParkingSpot spot = parkingSpotRepository.findByIdForUpdate(request.getSpotId())
                 .orElseThrow(() -> new RuntimeException("车位不存在"));
 
-        if (spot.getStatus() == 0) {
-            throw new RuntimeException("该车位处于维护或离线状态，暂停服务");
-        }
-
-        // 检查预约时间段冲突
-        List<Reservation> conflicts = reservationRepository.findConflictingReservations(
-                request.getSpotId(),
-                request.getStartTime(),
-                request.getEndTime());
-        if (!conflicts.isEmpty()) {
-            throw new RuntimeException("该时间段车位已被预约");
-        }
-
-        if (request.getStartTime().isAfter(request.getEndTime())) {
-            throw new RuntimeException("结束时间必须晚于开始时间");
-        }
-        long hours = Duration.between(request.getStartTime(), request.getEndTime()).toHours();
-        if (hours > 12) {
-            throw new RuntimeException("单次预约时长不能超过12小时");
+        Optional<String> validationError = validateReservationRequest(
+                spot, request.getSpotId(), request.getStartTime(), request.getEndTime());
+        if (validationError.isPresent()) {
+            throw new RuntimeException(validationError.get());
         }
 
         Reservation reservation = Reservation.builder()
@@ -104,6 +106,31 @@ public class ReservationService {
         parkingSpotRepository.save(spot);
 
         return saved;
+    }
+
+    private Optional<String> validateReservationRequest(ParkingSpot spot, Long spotId,
+            LocalDateTime startTime, LocalDateTime endTime) {
+        if (startTime == null || endTime == null) {
+            return Optional.of("请提供开始和结束时间");
+        }
+        if (!endTime.isAfter(startTime)) {
+            return Optional.of("结束时间必须晚于开始时间");
+        }
+        long minutes = Duration.between(startTime, endTime).toMinutes();
+        if (minutes > 12 * 60) {
+            return Optional.of("单次预约时长不能超过12小时");
+        }
+        if (spot.getStatus() == 0) {
+            return Optional.of("该车位处于维护或离线状态，暂停服务");
+        }
+
+        List<Reservation> conflicts = reservationRepository.findConflictingReservations(
+                spotId, startTime, endTime);
+        if (!conflicts.isEmpty()) {
+            return Optional.of("该时间段车位已被预约");
+        }
+
+        return Optional.empty();
     }
 
     /**
@@ -231,6 +258,8 @@ public class ReservationService {
                 .stationAddress(station.getAddress())
                 .startTime(reservation.getStartTime())
                 .endTime(reservation.getEndTime())
+                .actualArrivalTime(reservation.getActualArrivalTime())
+                .actualLeaveTime(reservation.getActualLeaveTime())
                 .carPlate(reservation.getCarPlate())
                 .status(reservation.getStatus())
                 .statusText(ReservationDTO.getStatusText(reservation.getStatus()))

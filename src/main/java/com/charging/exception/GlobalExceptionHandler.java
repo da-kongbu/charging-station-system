@@ -7,6 +7,7 @@ import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -49,9 +50,26 @@ public class GlobalExceptionHandler {
             String errorMessage = error.getDefaultMessage();
             errors.put(fieldName, errorMessage);
         });
+        String detail = String.join("；", errors.values());
         return ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
-                .body(ApiResponse.error(400, "参数验证失败"));
+                .body(ApiResponse.<Map<String, String>>builder()
+                        .code(400)
+                        .message(detail)
+                        .data(errors)
+                        .timestamp(System.currentTimeMillis())
+                        .build());
+    }
+
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMethodNotSupportedException(
+            HttpRequestMethodNotSupportedException e) {
+        String supported = e.getSupportedHttpMethods() == null || e.getSupportedHttpMethods().isEmpty()
+                ? ""
+                : "，支持的方法: " + e.getSupportedHttpMethods();
+        return ResponseEntity
+                .status(HttpStatus.METHOD_NOT_ALLOWED)
+                .body(ApiResponse.error(405, "请求方法 '" + e.getMethod() + "' 不支持" + supported));
     }
 
     @ExceptionHandler(Exception.class)

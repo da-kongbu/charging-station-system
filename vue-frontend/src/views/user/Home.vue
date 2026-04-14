@@ -1,15 +1,27 @@
+<script>
+export default { name: 'Home' }
+</script>
+
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import StationCard from '@/components/business/StationCard.vue'
 import api, { stationApi } from '@/api'
 import { useLocation } from '@/composables/useLocation'
 import { useBaiduMap } from '@/composables/useBaiduMap'
 import { autoImportNearbyStations } from '@/services/autoImport'
+import { useSmartSearchStore } from '@/stores/smartSearch'
+
+const router = useRouter()
+const smartStore = useSmartSearchStore()
 
 const stations = ref([])
 const loading = ref(true)
 const searchKeyword = ref('')
 const viewMode = ref('list')
+
+// 搜索状态（本地 UI 状态，数据存 store）
+const smartLoading = ref(false)
 
 const importStatus = ref('idle') // idle | importing | done | skipped
 const importProgress = ref('')
@@ -28,14 +40,15 @@ async function loadStations() {
   try {
     await getUserLocation()
 
-    // 检查当前用户是否已完成首次导入
+    // 先查后端有没有充电站数据
+    let res = await stationApi.getAll()
+    let rawStations = res.data.data || []
+
+    // 数据库为空且已登录 → 触发自动导入
     const userStr = localStorage.getItem('user')
     const user = userStr ? JSON.parse(userStr) : {}
-    const importKey = user.id ? `import_done_${user.id}` : null
-    const hasImported = importKey ? localStorage.getItem(importKey) : null
 
-    // 已登录且未导入过 → 触发自动导入
-    if (user.id && !hasImported) {
+    if (rawStations.length === 0 && user.id) {
       importStatus.value = 'importing'
       importProgress.value = '正在准备搜索附近充电站...'
 
@@ -46,19 +59,17 @@ async function loadStations() {
         )
         importedCount.value = count
         importStatus.value = 'done'
-        if (importKey) localStorage.setItem(importKey, 'true')
       } catch (err) {
         console.error('[Home] 导入失败:', err)
         importStatus.value = 'skipped'
-        if (importKey) localStorage.setItem(importKey, 'true')
       }
+
+      // 重新加载站点列表
+      res = await stationApi.getAll()
+      rawStations = res.data.data || []
     } else {
       importStatus.value = 'skipped'
     }
-
-    // 加载站点列表
-    const res = await stationApi.getAll()
-    let rawStations = res.data.data || []
 
     if (userLocation.value) {
       stations.value = rawStations.map(s => ({
@@ -89,13 +100,9 @@ const currentPage = ref(1)
 const pageSize = 9
 
 const filteredStations = computed(() => {
-  if (!searchKeyword.value) return stations.value
-  const keyword = searchKeyword.value.toLowerCase()
-  return stations.value.filter(s =>
-    s.name.toLowerCase().includes(keyword) ||
-    (s.address && s.address.toLowerCase().includes(keyword)) ||
-    (s.city && s.city.toLowerCase().includes(keyword))
-  )
+  // AI 模式激活时不再显示普通列表
+  if (smartStore.active) return []
+  return stations.value
 })
 
 const paginatedStations = computed(() => {
@@ -104,6 +111,75 @@ const paginatedStations = computed(() => {
 })
 
 const totalPages = computed(() => Math.ceil(filteredStations.value.length / pageSize))
+
+// AI 搜索：调用 AI Agent 获取推荐站点
+async function aiSearch() {
+  const query = searchKeyword.value.trim()
+  if (!query || smartLoading.value) return
+
+  smartLoading.value = true
+
+  try {
+    const body = { question: query }
+    if (userLocation.value) {
+      body.lat = userLocation.value.latitude
+      body.lng = userLocation.value.longitude
+    }
+
+    const response = await api.post('/ai/agent', body)
+    const json = response.data
+
+    if (json.code === 200 && json.data) {
+      const data = json.data
+      const summaryText = data.content || ''
+
+      if (data.type === 'stations' && data.data?.length) {
+        const mappedStations = data.data.map(s => ({
+          id: s.id || s['ID'],
+          name: s['名称'] || s.name,
+          address: s['地址'] || s.address,
+          city: s['城市'] || s.city,
+          distance: s['距离(km)'] || s.distanceKm,
+          availablePiles: s['当前可用桩数'] ?? s.availablePileCount ?? null,
+          totalPiles: s['总桩数'] ?? s.pileCount ?? null,
+          piles: [],
+          status: 1,
+          _smartRecommended: true
+        }))
+        smartStore.setResults(mappedStations, summaryText)
+      } else {
+        smartStore.setResults([], summaryText || '未找到相关推荐')
+      }
+    } else {
+      smartStore.setResults([], json.message || '未找到相关推荐')
+    }
+  } catch (error) {
+    console.error('AI 搜索失败:', error)
+    smartStore.setResults([], '搜索失败，请稍后再试')
+  } finally {
+    smartLoading.value = false
+  }
+}
+
+function clearSearchResults() {
+  smartStore.clear()
+  searchKeyword.value = ''
+}
+
+function formatSummary(text) {
+  if (!text) return ''
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\n\n/g, '<div style="height:8px"></div>')
+    .replace(/\n/g, '<br>')
+}
+
+function goToStation(id) {
+  router.push(`/station/${id}`)
+}
 
 function toggleView() {
   viewMode.value = viewMode.value === 'list' ? 'map' : 'list'
@@ -173,16 +249,29 @@ async function initMapWithMarkers() {
       <v-container class="text-center">
         <h1 class="text-white text-h4 text-md-h3 font-weight-bold mb-2">找到您身边的充电站</h1>
         <p class="text-white text-body-1 mb-6" style="opacity: 0.9;">便捷预约，轻松充电</p>
-        <v-responsive max-width="500" class="mx-auto">
-          <v-text-field
-            v-model="searchKeyword"
-            variant="solo"
-            rounded="pill"
-            prepend-inner-icon="mdi-magnify"
-            placeholder="搜索充电站名称或地址..."
-            hide-details
-            bg-color="white"
-          />
+        <v-responsive max-width="600" class="mx-auto">
+          <div class="d-flex align-center">
+            <v-text-field
+              v-model="searchKeyword"
+              variant="solo"
+              rounded="pill"
+              prepend-inner-icon="mdi-robot-outline"
+              placeholder="试试说：附近有快充站吗？明天下午要充2小时"
+              hide-details
+              bg-color="white"
+              @keydown.enter="aiSearch"
+              class="flex-grow-1"
+            />
+            <v-btn
+              icon="mdi-send"
+              variant="flat"
+              color="white"
+              size="small"
+              class="ml-2"
+              :loading="smartLoading"
+              @click="aiSearch"
+            />
+          </div>
         </v-responsive>
       </v-container>
     </div>
@@ -206,7 +295,7 @@ async function initMapWithMarkers() {
       </div>
 
       <template v-else>
-        <!-- 导入成功提示（独立于列表，不互斥） -->
+        <!-- 导入成功提示 -->
         <v-alert v-if="importStatus === 'done' && importedCount > 0" type="success" variant="tonal" closable class="mb-4">
           已为您找到并导入 {{ importedCount }} 个附近充电站
         </v-alert>
@@ -217,26 +306,92 @@ async function initMapWithMarkers() {
         </div>
 
         <template v-else>
-        <div v-if="viewMode === 'map'" class="map-container">
-          <div id="map-container" style="width:100%;height:500px;"></div>
-        </div>
-
-        <template v-else>
+        <!-- AI 推荐态：从 store 读取 -->
+        <div v-if="smartStore.hasResults" class="mb-6">
+          <div class="d-flex align-center justify-space-between mb-4">
+            <div class="d-flex align-center ga-2">
+              <v-icon color="primary">mdi-robot-outline</v-icon>
+              <h2 class="text-h6 font-weight-bold">AI 智能推荐</h2>
+              <v-chip size="x-small" color="primary" variant="tonal">{{ smartStore.stations.length }} 个结果</v-chip>
+            </div>
+            <v-btn variant="text" size="small" prepend-icon="mdi-close" @click="clearSearchResults">清空推荐</v-btn>
+          </div>
+          <v-alert variant="tonal" color="primary" class="mb-4 smart-summary" rounded="lg">
+            <div class="text-body-2" v-html="formatSummary(smartStore.summary)" />
+          </v-alert>
           <v-row>
-            <v-col v-for="station in paginatedStations" :key="station.id" cols="12" sm="6" md="4" class="d-flex">
-              <StationCard :station="station" class="w-100" />
+            <v-col v-for="station in smartStore.stations" :key="station.id" cols="12" sm="6" md="4" class="d-flex">
+              <v-card hover rounded="lg" class="w-100 station-card d-flex flex-column" @click="goToStation(station.id)">
+                <div class="station-image d-flex align-center justify-center">
+                  <v-icon size="56" color="white">mdi-ev-station</v-icon>
+                </div>
+                <v-card-text class="flex-grow-1 d-flex flex-column pa-4">
+                  <div class="d-flex align-start ga-2 mb-1">
+                    <v-chip size="x-small" color="primary" variant="flat" class="flex-shrink-0 mt-1">AI推荐</v-chip>
+                    <div class="text-subtitle-1 font-weight-bold station-title">{{ station.name }}</div>
+                  </div>
+                  <div class="text-body-2 text-grey-darken-1 mb-2 station-address">
+                    <v-icon size="14" class="mr-1">mdi-map-marker</v-icon>
+                    {{ station.address }}
+                  </div>
+                  <v-spacer />
+                  <div class="station-footer d-flex align-center justify-space-between">
+                    <span v-if="station.availablePiles != null" class="text-caption"
+                      :class="station.availablePiles > 0 ? 'text-success' : 'text-grey'">
+                      可用桩 {{ station.availablePiles }}/{{ station.totalPiles ?? '?' }}
+                    </span>
+                    <span v-else class="text-caption text-grey">桩位信息加载中</span>
+                    <span v-if="station.distance" class="text-caption text-primary font-weight-bold">
+                      {{ station.distance }} km
+                    </span>
+                  </div>
+                </v-card-text>
+              </v-card>
             </v-col>
           </v-row>
+        </div>
 
-          <div v-if="totalPages > 1" class="d-flex justify-center mt-6">
-            <v-pagination v-model="currentPage" :length="totalPages" total-visible="5" color="primary" rounded="circle" />
+        <!-- AI 搜索了但没有结果 -->
+        <div v-else-if="smartStore.active && !smartStore.stations.length" class="mb-6">
+          <div class="d-flex align-center justify-space-between mb-4">
+            <div class="d-flex align-center ga-2">
+              <v-icon color="primary">mdi-robot-outline</v-icon>
+              <h2 class="text-h6 font-weight-bold">AI 智能推荐</h2>
+            </div>
+            <v-btn variant="text" size="small" prepend-icon="mdi-close" @click="clearSearchResults">清空推荐</v-btn>
+          </div>
+          <v-alert variant="tonal" color="primary" class="mb-4 smart-summary" rounded="lg">
+            <div class="text-body-2" v-html="formatSummary(smartStore.summary)" />
+          </v-alert>
+          <div class="text-center py-6 text-grey">
+            未找到匹配的充电站，换个说法试试？
+          </div>
+        </div>
+
+        <!-- 普通态：站点列表 -->
+        <template v-if="!smartStore.active">
+
+          <div v-if="viewMode === 'map'" class="map-container">
+            <div id="map-container" style="width:100%;height:500px;"></div>
+          </div>
+
+          <template v-else>
+            <v-row>
+              <v-col v-for="station in paginatedStations" :key="station.id" cols="12" sm="6" md="4" class="d-flex">
+                <StationCard :station="station" class="w-100" />
+              </v-col>
+            </v-row>
+
+            <div v-if="totalPages > 1" class="d-flex justify-center mt-6">
+              <v-pagination v-model="currentPage" :length="totalPages" total-visible="5" color="primary" rounded="circle" />
+            </div>
+          </template>
+
+          <div v-if="filteredStations.length === 0 && !loading" class="text-center py-12">
+            <v-icon size="64" color="grey-lighten-1">mdi-ev-station</v-icon>
+            <p class="text-grey mt-4">暂无充电站数据</p>
           </div>
         </template>
-
-        <div v-if="filteredStations.length === 0 && !loading" class="text-center py-12">
-          <v-icon size="64" color="grey-lighten-1">mdi-ev-station</v-icon>
-          <p class="text-grey mt-4">暂无充电站数据</p>
-        </div>
         </template>
       </template>
     </v-container>
@@ -253,5 +408,32 @@ async function initMapWithMarkers() {
   border-radius: 12px;
   overflow: hidden;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.station-image {
+  background: linear-gradient(135deg, #00b894, #0984e3);
+  height: 100px;
+}
+
+.station-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.3;
+  min-height: 2.6em;
+}
+
+.station-address {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.4;
+  min-height: 2.8em;
+}
+
+.station-footer {
+  min-height: 20px;
 }
 </style>

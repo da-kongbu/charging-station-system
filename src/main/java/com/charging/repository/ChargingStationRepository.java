@@ -22,7 +22,12 @@ public interface ChargingStationRepository extends JpaRepository<ChargingStation
     
     List<ChargingStation> findByCityAndDistrict(String city, String district);
     
-    @Query("SELECT s FROM ChargingStation s WHERE s.name LIKE %:keyword% OR s.address LIKE %:keyword%")
+    @Query("""
+            SELECT s FROM ChargingStation s
+            WHERE LOWER(s.name) LIKE LOWER(CONCAT('%', :keyword, '%'))
+               OR LOWER(s.address) LIKE LOWER(CONCAT('%', :keyword, '%'))
+               OR LOWER(s.city) LIKE LOWER(CONCAT('%', :keyword, '%'))
+            """)
     List<ChargingStation> searchByKeyword(@Param("keyword") String keyword);
     
     @Query("SELECT s FROM ChargingStation s WHERE s.status = 1")

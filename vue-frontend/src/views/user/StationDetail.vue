@@ -58,7 +58,14 @@ function calculateEstimate() {
 const selectedDate = ref(new Date().toISOString().slice(0, 10))
 const occupiedSlots = ref([])
 
-onMounted(async () => { await loadStation() })
+// AI 推荐相关
+const aiRecommendation = ref('') // AI 推荐摘要文字
+const prefilledFromAI = ref(false) // 是否从 AI 推荐跳转过来
+
+onMounted(async () => {
+  await loadStation()
+  await handlePrefilledParams()
+})
 
 watch(selectedDate, async (newDate) => {
   if (selectedSpot.value) await loadOccupiedSlots(selectedSpot.value.id, newDate)
@@ -82,6 +89,40 @@ async function loadStation() {
     console.error('Failed to load station:', error)
   } finally {
     loading.value = false
+  }
+}
+
+// 处理从 AI 推荐跳转过来的预填参数
+async function handlePrefilledParams() {
+  const { spotId, startTime, endTime, aiHint } = route.query
+  if (!spotId || !station.value) return
+
+  // 在站点数据中找到对应车位
+  let targetSpot = null
+  for (const pile of station.value.piles || []) {
+    for (const spot of pile.parkingSpots || []) {
+      if (String(spot.id) === String(spotId)) {
+        targetSpot = spot
+        break
+      }
+    }
+    if (targetSpot) break
+  }
+
+  if (!targetSpot || targetSpot.status === 0) return
+
+  prefilledFromAI.value = true
+  aiRecommendation.value = aiHint || '基于您的需求推荐'
+
+  // 打开预约弹窗并预填参数
+  openBookingModal(targetSpot)
+
+  if (startTime) reservationForm.value.startTime = startTime
+  if (endTime) reservationForm.value.endTime = endTime
+  if (startTime) selectedDate.value = startTime.slice(0, 10)
+
+  if (startTime && endTime) {
+    loadOccupiedSlots(Number(spotId), selectedDate.value)
   }
 }
 
@@ -261,6 +302,13 @@ function getSegmentStyle(slot) {
         </v-card-title>
 
         <v-card-text>
+          <!-- AI 推荐标签 -->
+          <v-alert v-if="aiRecommendation" type="info" variant="tonal" density="compact" rounded="lg" class="mb-4">
+            <div class="d-flex align-center ga-2">
+              <v-icon size="18">mdi-robot-outline</v-icon>
+              <span class="text-body-2">{{ aiRecommendation }}</span>
+            </div>
+          </v-alert>
           <!-- Timeline -->
           <div class="mb-4">
             <div class="text-body-2 text-grey mb-2">日期查看</div>
@@ -319,7 +367,7 @@ function getSegmentStyle(slot) {
 
         <v-card-actions class="pa-4 pt-0">
           <v-spacer />
-          <v-btn variant="text" @click="showModal = false">取消</v-btn>
+          <v-btn variant="text" @click="showModal = false; aiRecommendation = ''">取消</v-btn>
           <v-btn color="primary" variant="flat" :loading="bookingLoading" @click="submitReservation">确认预约</v-btn>
         </v-card-actions>
       </v-card>

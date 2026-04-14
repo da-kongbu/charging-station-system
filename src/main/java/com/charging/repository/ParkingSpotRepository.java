@@ -33,7 +33,7 @@ public interface ParkingSpotRepository extends JpaRepository<ParkingSpot, Long> 
        @Query("SELECT ps FROM ParkingSpot ps WHERE ps.pile.station.id = :stationId AND ps.status = 1")
        List<ParkingSpot> findAvailableByStationId(@Param("stationId") Long stationId);
 
-       @Query("SELECT ps FROM ParkingSpot ps WHERE ps.status = 1 AND ps.id NOT IN " +
+       @Query("SELECT ps FROM ParkingSpot ps WHERE ps.status <> 0 AND ps.id NOT IN " +
                      "(SELECT r.spot.id FROM Reservation r WHERE r.status IN (1, 2) " +
                      "AND ((r.startTime <= :endTime AND r.endTime >= :startTime)))")
        List<ParkingSpot> findAvailableSpots(@Param("startTime") LocalDateTime startTime,

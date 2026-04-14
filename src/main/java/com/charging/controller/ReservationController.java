@@ -50,9 +50,17 @@ public class ReservationController {
 
     @GetMapping("/{id}")
     @Operation(summary = "获取预约详情")
-    public ResponseEntity<ApiResponse<ReservationDTO>> getReservation(@PathVariable(name = "id") Long id) {
+    public ResponseEntity<ApiResponse<ReservationDTO>> getReservation(
+            @AuthenticationPrincipal UserDetails userDetails,
+            @PathVariable(name = "id") Long id) {
         ReservationDTO reservation = reservationService.findById(id)
                 .orElseThrow(() -> new RuntimeException("预约不存在"));
+        // 越权校验：只能查看自己的预约
+        User user = userService.findByUsername(userDetails.getUsername())
+                .orElseThrow(() -> new RuntimeException("用户不存在"));
+        if (!reservation.getUserId().equals(user.getId())) {
+            return ResponseEntity.status(403).body(ApiResponse.error("无权访问该预约"));
+        }
         return ResponseEntity.ok(ApiResponse.success(reservation));
     }
 
@@ -96,15 +104,31 @@ public class ReservationController {
 
     @PostMapping("/{id}/checkin")
     @Operation(summary = "预约签到")
-    public ResponseEntity<ApiResponse<Reservation>> checkIn(@PathVariable(name = "id") Long id) {
+    public ResponseEntity<ApiResponse<Reservation>> checkIn(
+            @AuthenticationPrincipal UserDetails userDetails,
+            @PathVariable(name = "id") Long id) {
+        User user = userService.findByUsername(userDetails.getUsername())
+                .orElseThrow(() -> new RuntimeException("用户不存在"));
         Reservation reservation = reservationService.checkIn(id);
+        // 越权校验
+        if (!reservation.getUser().getId().equals(user.getId())) {
+            return ResponseEntity.status(403).body(ApiResponse.error("无权操作该预约"));
+        }
         return ResponseEntity.ok(ApiResponse.success("签到成功", reservation));
     }
 
     @PostMapping("/{id}/checkout")
     @Operation(summary = "预约签退")
-    public ResponseEntity<ApiResponse<Reservation>> checkOut(@PathVariable(name = "id") Long id) {
+    public ResponseEntity<ApiResponse<Reservation>> checkOut(
+            @AuthenticationPrincipal UserDetails userDetails,
+            @PathVariable(name = "id") Long id) {
+        User user = userService.findByUsername(userDetails.getUsername())
+                .orElseThrow(() -> new RuntimeException("用户不存在"));
         Reservation reservation = reservationService.checkOut(id);
+        // 越权校验
+        if (!reservation.getUser().getId().equals(user.getId())) {
+            return ResponseEntity.status(403).body(ApiResponse.error("无权操作该预约"));
+        }
         return ResponseEntity.ok(ApiResponse.success("签退成功，请前往订单页支付", reservation));
     }
 }

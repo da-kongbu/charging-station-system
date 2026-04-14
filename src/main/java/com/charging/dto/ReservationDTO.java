@@ -60,6 +60,12 @@ public class ReservationDTO {
     private LocalDateTime endTime;
 
     /**
+     * 实际签到/离场时间，用于前端实时监控和订单展示。
+     */
+    private LocalDateTime actualArrivalTime;
+    private LocalDateTime actualLeaveTime;
+
+    /**
      * 用户当时下单关联开过来的车牌号（方便道闸放行核对）
      */
     private String carPlate;

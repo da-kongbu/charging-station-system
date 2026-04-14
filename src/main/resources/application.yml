@@ -57,9 +57,9 @@ logging:
 # AI 大模型配置（硅基流动 SiliconFlow）
 ai:
   siliconflow:
-    api-key: "sk-ozgzukrkodnpqybylqjsmkevsjuustwaoyldflhbndodkmgx"
+    api-key: ${AI_SILICONFLOW_API_KEY:sk-placeholder}
     url: "https://api.siliconflow.cn/v1/chat/completions"
     model: "deepseek-ai/DeepSeek-V3"
+    agent-timeout-seconds: 60 # 预约补问等场景最多等待 60 秒，超时后走后端业务兜底
     embedding-url: "https://api.siliconflow.cn/v1/embeddings"
     embedding-model: "BAAI/bge-m3"
-

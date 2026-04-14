@@ -7,6 +7,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * 车位查询服务
@@ -23,6 +24,13 @@ public class ParkingSpotService {
      */
     public List<ParkingSpot> findAvailableByStationId(Long stationId) {
         return parkingSpotRepository.findAvailableByStationId(stationId);
+    }
+
+    /**
+     * 根据ID查询车位
+     */
+    public Optional<ParkingSpot> findById(Long id) {
+        return parkingSpotRepository.findById(id);
     }
 
     /**

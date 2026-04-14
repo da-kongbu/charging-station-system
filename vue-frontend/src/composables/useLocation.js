@@ -1,36 +1,52 @@
 import { ref } from 'vue'
 
+// 全局单例状态，所有组件共享同一次定位结果
+const globalLocation = ref(null)
+const globalStatus = ref('idle') // idle, loading, success, error
+let locationPromise = null // 缓存进行中的请求，防止重复调用
+
 export function useLocation() {
-    const userLocation = ref(null)
-    const locationStatus = ref('idle') // idle, loading, success, error
 
     /**
      * 获取用户位置 (优先使用百度地图SDK，降级使用HTML5)
+     * 全局只发一次请求，后续调用直接复用结果
      */
     function getUserLocation() {
-        locationStatus.value = 'loading'
-        return new Promise((resolve) => {
+        // 已经成功获取过 → 直接返回缓存
+        if (globalStatus.value === 'success' && globalLocation.value) {
+            return Promise.resolve(globalLocation.value)
+        }
+        // 正在请求中 → 复用同一个 Promise，不重复发请求
+        if (locationPromise) {
+            return locationPromise
+        }
+
+        globalStatus.value = 'loading'
+        locationPromise = new Promise((resolve) => {
             // 优先使用百度地图定位SDK (如果已加载)
             if (typeof BMapGL !== 'undefined' && BMapGL.Geolocation) {
                 const geolocation = new BMapGL.Geolocation()
                 geolocation.getCurrentPosition(function (r) {
                     if (this.getStatus() === BMAP_STATUS_SUCCESS) {
-                        userLocation.value = {
+                        globalLocation.value = {
                             longitude: r.point.lng,
                             latitude: r.point.lat
                         }
-                        locationStatus.value = 'success'
-                        resolve(userLocation.value)
+                        globalStatus.value = 'success'
+                        locationPromise = null
+                        resolve(globalLocation.value)
                     } else {
                         console.warn('[useLocation] 百度地图定位失败:', this.getStatus())
-                        // 降级尝试 HTML5 定位
+                        locationPromise = null
                         tryHtml5Location(resolve)
                     }
                 })
             } else {
+                locationPromise = null
                 tryHtml5Location(resolve)
             }
         })
+        return locationPromise
     }
 
     /**
@@ -40,23 +56,23 @@ export function useLocation() {
         if (navigator.geolocation) {
             navigator.geolocation.getCurrentPosition(
                 (position) => {
-                    userLocation.value = {
+                    globalLocation.value = {
                         longitude: position.coords.longitude,
                         latitude: position.coords.latitude
                     }
-                    locationStatus.value = 'success'
-                    resolve(userLocation.value)
+                    globalStatus.value = 'success'
+                    resolve(globalLocation.value)
                 },
                 (error) => {
                     console.error('[useLocation] HTML5定位失败:', error)
-                    locationStatus.value = 'error'
+                    globalStatus.value = 'error'
                     resolve(null)
                 },
                 { timeout: 10000 }
             )
         } else {
             console.warn('[useLocation] 浏览器不支持定位')
-            locationStatus.value = 'error'
+            globalStatus.value = 'error'
             resolve(null)
         }
     }
@@ -108,8 +124,8 @@ export function useLocation() {
     }
 
     return {
-        userLocation,
-        locationStatus,
+        userLocation: globalLocation,
+        locationStatus: globalStatus,
         getUserLocation,
         calculateDistance
     }

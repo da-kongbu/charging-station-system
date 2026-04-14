@@ -60,6 +60,7 @@ public class ChargingStationService {
     public List<ChargingStationDTO> findAllAvailable() {
         return stationRepository.findAllAvailable().stream()
                 .map(this::convertToDTO)
+                .filter(this::hasAvailablePile)
                 .collect(Collectors.toList());
     }
 
@@ -320,5 +321,11 @@ public class ChargingStationService {
                 .serviceFee(spot.getServiceFee())
                 .status(dynamicStatus)
                 .build();
+    }
+
+    private boolean hasAvailablePile(ChargingStationDTO station) {
+        return station != null
+                && station.getAvailablePileCount() != null
+                && station.getAvailablePileCount() > 0;
     }
 }

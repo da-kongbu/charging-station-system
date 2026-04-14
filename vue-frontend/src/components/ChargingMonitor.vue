@@ -6,7 +6,8 @@ import { Client } from '@stomp/stompjs'
 const props = defineProps({
   reservationId: { type: Number, required: true },
   visible: { type: Boolean, default: false },
-  pilePower: { type: Number, default: 7 }
+  pilePower: { type: Number, default: 7 },
+  actualArrivalTime: { type: [String, Number, Date], default: '' }
 })
 
 const emit = defineEmits(['close'])
@@ -16,18 +17,72 @@ const chargingData = ref(null)
 const connected = ref(false)
 const socketError = ref(null)
 const demoMode = ref(false)
+const elapsedSeconds = ref(0)
 let demoInterval = null
 let connectionTimeout = null
+let elapsedTimer = null
 
 // 模块级别缓存，组件重新挂载也不会丢失进度
 const demoStateCache = new Map()
 
 watch(() => props.visible, (newVal) => {
-  if (newVal) connectWebSocket()
-  else { disconnectWebSocket(); stopDemo() }
+  if (newVal) {
+    startElapsedTimer()
+    connectWebSocket()
+  } else {
+    disconnectWebSocket()
+    stopDemo()
+    stopElapsedTimer()
+  }
 })
 
-onUnmounted(() => { disconnectWebSocket(); stopDemo() })
+watch(() => props.actualArrivalTime, () => {
+  if (props.visible) {
+    startElapsedTimer()
+  }
+})
+
+onUnmounted(() => {
+  disconnectWebSocket()
+  stopDemo()
+  stopElapsedTimer()
+})
+
+function parseTimestamp(value) {
+  if (!value) return null
+  if (value instanceof Date) return value.getTime()
+  if (typeof value === 'number') return value
+  if (typeof value !== 'string') return null
+  const parsed = Date.parse(value.includes('T') ? value : value.replace(' ', 'T'))
+  return Number.isNaN(parsed) ? null : parsed
+}
+
+function getChargingStartTimestamp() {
+  return parseTimestamp(props.actualArrivalTime)
+}
+
+function updateElapsedSeconds() {
+  const startTime = getChargingStartTimestamp()
+  if (!startTime) {
+    elapsedSeconds.value = 0
+    return
+  }
+  elapsedSeconds.value = Math.max(0, Math.floor((Date.now() - startTime) / 1000))
+}
+
+function startElapsedTimer() {
+  stopElapsedTimer()
+  updateElapsedSeconds()
+  if (!getChargingStartTimestamp()) return
+  elapsedTimer = setInterval(updateElapsedSeconds, 1000)
+}
+
+function stopElapsedTimer() {
+  if (elapsedTimer) {
+    clearInterval(elapsedTimer)
+    elapsedTimer = null
+  }
+}
 
 function connectWebSocket() {
   // 重置状态
@@ -86,14 +141,19 @@ function startDemoFallback() {
   const BATTERY_CAPACITY_KWH = 60.0
   const baseVoltage = POWER_KW > 50 ? 750 : 220
   const baseCurrent = (POWER_KW * 1000) / baseVoltage
+  const chargingStartTime = getChargingStartTimestamp() || Date.now()
 
   // 复用缓存状态，保持进度连续
   let state = demoStateCache.get(rid)
   if (!state) {
     const startSoc = POWER_KW > 50 ? (10 + Math.floor(Math.random() * 20)) : (20 + Math.floor(Math.random() * 30))
-    state = { startSoc, startTime: Date.now(), powerKw: POWER_KW }
+    state = { startSoc, startTime: chargingStartTime, powerKw: POWER_KW }
     demoStateCache.set(rid, state)
+  } else if (chargingStartTime < state.startTime) {
+    state.startTime = chargingStartTime
   }
+
+  state.powerKw = POWER_KW
 
   const { startSoc, startTime } = state
 
@@ -149,6 +209,14 @@ function getBatteryHexColor(soc) {
   if (soc < 50) return '#f59e0b'
   return '#10b981'
 }
+
+function formatElapsed(totalSeconds) {
+  const seconds = Math.max(0, totalSeconds || 0)
+  const hours = String(Math.floor(seconds / 3600)).padStart(2, '0')
+  const minutes = String(Math.floor((seconds % 3600) / 60)).padStart(2, '0')
+  const remainingSeconds = String(seconds % 60).padStart(2, '0')
+  return `${hours}:${minutes}:${remainingSeconds}`
+}
 </script>
 
 <template>
@@ -168,6 +236,7 @@ function getBatteryHexColor(soc) {
         <div v-if="!connected && !socketError" class="text-center py-8">
           <v-progress-circular indeterminate color="primary" size="40" />
           <p class="text-grey mt-3">正在连接充电桩...</p>
+          <p v-if="elapsedSeconds > 0" class="text-caption text-grey mt-2">已签到 {{ formatElapsed(elapsedSeconds) }}</p>
         </div>
 
         <!-- Error -->
@@ -177,12 +246,16 @@ function getBatteryHexColor(soc) {
         <div v-if="connected && !chargingData" class="text-center py-8">
           <v-progress-circular indeterminate color="primary" size="40" />
           <p class="text-grey mt-3">等待数据传输...</p>
+          <p v-if="elapsedSeconds > 0" class="text-caption text-grey mt-2">已签到 {{ formatElapsed(elapsedSeconds) }}，监控数据会持续刷新</p>
         </div>
 
         <!-- Dashboard -->
         <div v-if="chargingData">
           <div v-if="demoMode" class="text-center mb-4">
-            <v-chip color="warning" size="small" variant="tonal" prepend-icon="mdi-test-tube">演示模式</v-chip>
+            <v-chip color="warning" size="small" variant="tonal" prepend-icon="mdi-test-tube">仿真演示数据</v-chip>
+          </div>
+          <div v-else class="text-center mb-4">
+            <span class="text-caption text-grey">数据来源于充电桩实时上报</span>
           </div>
 
           <!-- Battery Visual -->
@@ -234,6 +307,7 @@ function getBatteryHexColor(soc) {
             rounded
             class="mb-2"
           />
+          <p v-if="elapsedSeconds > 0" class="text-center text-body-2 text-grey mb-1">已充时长: {{ formatElapsed(elapsedSeconds) }}</p>
           <p class="text-center text-body-2 text-grey">预计剩余时间: {{ chargingData.remainingTime }} 分钟</p>
         </div>
       </v-card-text>

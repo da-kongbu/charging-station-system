@@ -6,6 +6,7 @@ const orders = ref([])
 const loading = ref(true)
 const snackbar = ref({ show: false, message: '', color: 'success' })
 const confirmDialog = ref({ show: false, orderId: null })
+const expandedOrderId = ref(null)
 
 onMounted(async () => { await loadOrders() })
 
@@ -46,6 +47,24 @@ function getStatusText(status) {
 function formatDate(str) {
   if (!str) return '-'
   return new Date(str).toLocaleString('zh-CN')
+}
+
+function toggleFeeDetail(orderId) {
+  expandedOrderId.value = expandedOrderId.value === orderId ? null : orderId
+}
+
+function buildFeeExplanation(o) {
+  const parts = []
+  if (o.parkingFee > 0) {
+    parts.push(`停车费 ¥${o.parkingFee}（按分时段计费：早高峰 08:00-10:00 / 晚高峰 17:00-21:00 为 1.5 倍率，谷电 23:00-07:00 为 0.5 倍率，其他时段 1.0 倍率）`)
+  }
+  if (o.chargingFee > 0) {
+    parts.push(`充电费 ¥${o.chargingFee}（按实际用电量 × 电价计算）`)
+  }
+  if (o.serviceFee > 0) {
+    parts.push(`服务费 ¥${o.serviceFee}（固定服务费）`)
+  }
+  return parts.join('；')
 }
 </script>
 
@@ -89,13 +108,34 @@ function formatDate(str) {
             </v-table>
 
             <div class="text-caption text-grey mt-3">创建时间：{{ formatDate(o.createdAt) }}</div>
+
+            <!-- 费用说明 -->
+            <div class="mt-2">
+              <v-btn
+                variant="text"
+                size="x-small"
+                density="compact"
+                :append-icon="expandedOrderId === o.id ? 'mdi-chevron-up' : 'mdi-chevron-down'"
+                @click="toggleFeeDetail(o.id)"
+              >
+                费用说明
+              </v-btn>
+              <v-expand-transition>
+                <div v-if="expandedOrderId === o.id" class="mt-2">
+                  <v-sheet color="grey-lighten-4" rounded="lg" class="pa-3">
+                    <div class="text-body-2 mb-1">费用构成：总计 = 停车费 + 充电费 + 服务费</div>
+                    <div class="text-caption text-grey">{{ buildFeeExplanation(o) }}</div>
+                  </v-sheet>
+                </div>
+              </v-expand-transition>
+            </div>
           </v-card-text>
 
           <template v-if="o.status === 1">
             <v-divider />
             <v-card-actions class="pa-3">
               <v-btn color="primary" variant="flat" block @click="confirmDialog = { show: true, orderId: o.id }">
-                立即支付
+                模拟支付
               </v-btn>
             </v-card-actions>
           </template>
@@ -106,8 +146,8 @@ function formatDate(str) {
     <!-- Pay Confirm Dialog -->
     <v-dialog v-model="confirmDialog.show" max-width="360">
       <v-card rounded="lg">
-        <v-card-title>确认支付</v-card-title>
-        <v-card-text>确认使用微信支付？</v-card-text>
+        <v-card-title>模拟支付</v-card-title>
+        <v-card-text>确认模拟支付？此为演示功能，不会产生实际扣费。</v-card-text>
         <v-card-actions>
           <v-spacer />
           <v-btn variant="text" @click="confirmDialog.show = false">取消</v-btn>

@@ -8,6 +8,7 @@ const loading = ref(true)
 const showMonitor = ref(false)
 const monitorReservationId = ref(0)
 const monitorPilePower = ref(7)
+const monitorArrivalTime = ref('')
 const snackbar = ref({ show: false, message: '', color: 'success' })
 
 // Confirm dialog
@@ -81,9 +82,10 @@ function formatDate(str) {
   return new Date(str).toLocaleString('zh-CN')
 }
 
-function openMonitor(id, power) {
+function openMonitor(id, power, actualArrivalTime) {
   monitorReservationId.value = id
   monitorPilePower.value = power || 7
+  monitorArrivalTime.value = actualArrivalTime || ''
   showMonitor.value = true
 }
 </script>
@@ -131,7 +133,27 @@ function openMonitor(id, power) {
               <v-col cols="12">
                 <div class="text-body-2"><span class="text-grey">预约时间：</span>{{ formatDate(r.startTime) }} - {{ formatDate(r.endTime) }}</div>
               </v-col>
+              <v-col v-if="r.actualArrivalTime" cols="12" sm="6">
+                <div class="text-body-2"><span class="text-grey">签到时间：</span>{{ formatDate(r.actualArrivalTime) }}</div>
+              </v-col>
+              <v-col v-if="r.actualLeaveTime" cols="12" sm="6">
+                <div class="text-body-2"><span class="text-grey">结束时间：</span>{{ formatDate(r.actualLeaveTime) }}</div>
+              </v-col>
             </v-row>
+
+            <!-- 状态引导文字 -->
+            <v-sheet v-if="r.status === 1" color="warning-lighten-4" rounded="lg" class="pa-3 mt-3 d-flex align-center">
+              <v-icon size="18" color="warning" class="mr-2">mdi-information-outline</v-icon>
+              <span class="text-body-2">可提前5分钟签到，超时未签到将自动取消</span>
+            </v-sheet>
+            <v-sheet v-if="r.status === 2" color="info-lighten-4" rounded="lg" class="pa-3 mt-3 d-flex align-center">
+              <v-icon size="18" color="info" class="mr-2">mdi-lightning-bolt</v-icon>
+              <span class="text-body-2">正在充电中，点击"监控"可查看实时充电状态</span>
+            </v-sheet>
+            <v-sheet v-if="r.status === 3" color="success-lighten-4" rounded="lg" class="pa-3 mt-3 d-flex align-center">
+              <v-icon size="18" color="success" class="mr-2">mdi-receipt-text-check</v-icon>
+              <span class="text-body-2">充电已完成，订单已生成，请前往"我的订单"查看并支付</span>
+            </v-sheet>
           </v-card-text>
 
           <v-divider />
@@ -145,7 +167,7 @@ function openMonitor(id, power) {
               <span class="text-caption text-grey ml-2">可提前5分钟签到，过期失效</span>
             </template>
             <template v-if="r.status === 2">
-              <v-btn color="info" size="small" variant="outlined" @click="openMonitor(r.id, r.pilePower)">
+              <v-btn color="info" size="small" variant="outlined" @click="openMonitor(r.id, r.pilePower, r.actualArrivalTime)">
                 <v-icon class="mr-1">mdi-monitor</v-icon>监控
               </v-btn>
               <v-btn color="primary" size="small" variant="flat" @click="showConfirm('结束充电', '确认结束充电？将生成订单。', () => handleCheckOut(r.id))">
@@ -161,6 +183,7 @@ function openMonitor(id, power) {
       :visible="showMonitor"
       :reservation-id="monitorReservationId"
       :pile-power="monitorPilePower"
+      :actual-arrival-time="monitorArrivalTime"
       @close="showMonitor = false"
     />
 
