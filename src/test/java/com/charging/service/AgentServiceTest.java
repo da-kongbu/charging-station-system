@@ -82,6 +82,50 @@ class AgentServiceTest {
     }
 
     @Test
+    void queryAvailableSpotsShouldDefaultToSlowChargeWhenTypeMissing() {
+        ParkingSpotService parkingSpotService = new StubParkingSpotService(
+                buildSpot(1L, "星星充电站", 101L, "SPOT-DC-001", "DC"),
+                buildSpot(1L, "星星充电站", 102L, "SPOT-AC-001", "AC"));
+        StationDiscoveryService stationDiscoveryService = new StationDiscoveryService(new StubChargingStationService());
+        AgentService agentService = new AgentService(
+                new StubChargingStationService(), null, parkingSpotService, stationDiscoveryService);
+
+        String result = ReflectionTestUtils.invokeMethod(
+                agentService,
+                "queryAvailableSpots",
+                1L,
+                "2026-04-11T15:00:00",
+                "2026-04-11T17:00:00",
+                null);
+
+        assertThat(result).contains("SPOT-AC-001");
+        assertThat(result).doesNotContain("SPOT-DC-001");
+    }
+
+    @Test
+    void executeFunctionShouldParseSnakeCaseToolArguments() {
+        ParkingSpotService parkingSpotService = new StubParkingSpotService(buildSpot("SPOT-DC-001", "DC"));
+        StationDiscoveryService stationDiscoveryService = new StationDiscoveryService(new StubChargingStationService());
+        AgentService agentService = new AgentService(
+                new StubChargingStationService(), null, parkingSpotService, stationDiscoveryService);
+
+        String result = ReflectionTestUtils.invokeMethod(
+                agentService,
+                "executeFunction",
+                "query_available_spots",
+                """
+                        {
+                          "station_id": 1,
+                          "start_time": "2026-04-11T15:00:00",
+                          "end_time": "2026-04-11T17:00:00",
+                          "charging_type": "快充"
+                        }
+                        """);
+
+        assertThat(result).contains("SPOT-DC-001");
+    }
+
+    @Test
     void buildSystemPromptShouldContainCurrentTimeHint() {
         StationDiscoveryService stationDiscoveryService = new StationDiscoveryService(new StubChargingStationService());
         AgentService agentService = new AgentService(
@@ -344,7 +388,7 @@ class AgentServiceTest {
 
     @Test
     void agentChatShouldKeepDeterministicReservationFlowWhenTimeIsProvided() {
-        ParkingSpot spot = buildSpot("SPOT-DC-001", "DC");
+        ParkingSpot spot = buildSpot("SPOT-AC-001", "AC");
         AgentService agentService = buildAgentService(
                 new SuccessfulReservationService(),
                 new StubParkingSpotService(spot));
@@ -360,7 +404,334 @@ class AgentServiceTest {
                 "req-reservation-time-provided");
 
         assertThat(response.getType()).isEqualTo("reservation_pending");
+        assertThat(response.getContent()).contains("请确认预约信息").contains("交流慢充");
+    }
+
+    @Test
+    void agentChatShouldReturnRecommendationWhenFallbackStationIsUsed() {
+        ParkingSpot dcSpot = buildSpot(1L, "星星充电站", 201L, "SPOT-DC-001", "DC");
+        ParkingSpot acSpot = buildSpot(2L, "理想超充站", 202L, "SPOT-AC-001", "AC");
+        AgentService agentService = buildAgentService(
+                new SuccessfulReservationService(),
+                new StubParkingSpotService(dcSpot, acSpot));
+
+        AgentChatResponse response = agentService.agentChat(
+                AgentChatRequest.builder()
+                        .question("帮我预约第一个，现在开始2小时，要慢充")
+                        .lat(31.782)
+                        .lng(119.965)
+                        .history(stationHistory())
+                        .build(),
+                7L,
+                "req-reservation-fallback");
+
+        assertThat(response.getType()).isEqualTo("recommend_booking");
+        assertThat(response.getContent())
+                .contains("星星充电站")
+                .contains("交流慢充")
+                .contains("按距离顺延");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> data = (Map<String, Object>) response.getData();
+        assertThat(data.get("station_id")).isEqualTo(2L);
+        assertThat(data.get("station_name")).isEqualTo("理想超充站");
+        assertThat(data).doesNotContainKey("confirm_token");
+    }
+
+    @Test
+    void agentChatShouldUseLatestSpotContextForDeterministicReservation() {
+        ParkingSpot firstStationSpot = buildSpot(1L, "星星充电站", 201L, "SPOT-DC-001", "DC");
+        ParkingSpot selectedSpot = buildSpot(2L, "理想超充站", 202L, "CP-7009-03-1", "DC");
+        AgentService agentService = buildAgentService(
+                new SuccessfulReservationService(),
+                new StubParkingSpotService(firstStationSpot, selectedSpot));
+
+        List<AgentHistoryMessage> history = List.of(
+                stationHistory().get(0),
+                AgentHistoryMessage.builder()
+                        .role("assistant")
+                        .content("我已经锁定第一个充电站了，请告诉我开始时间、持续多久，以及是否需要快充/慢充。")
+                        .build(),
+                AgentHistoryMessage.builder()
+                        .role("assistant")
+                        .content("""
+                                我找到了第二个充电站（理想超充站）的空闲车位：
+                                [可用车位]
+                                1. spot_id=202 CP-7009-03-1 直流快充 2.50元/h
+                                """)
+                        .build());
+
+        AgentChatResponse response = agentService.agentChat(
+                AgentChatRequest.builder()
+                        .question("你帮我预约现在，时间两小时，就这个车位")
+                        .lat(31.782)
+                        .lng(119.965)
+                        .history(history)
+                        .build(),
+                7L,
+                "req-spot-selection");
+
+        assertThat(response.getType()).isEqualTo("reservation_pending");
+        assertThat(response.getContent()).contains("理想超充站");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> data = (Map<String, Object>) response.getData();
+        assertThat(data.get("station_id")).isEqualTo(2L);
+        assertThat(data.get("station_name")).isEqualTo("理想超充站");
+        assertThat(data.get("spot_id")).isEqualTo(202L);
+        assertThat(data.get("spot_code")).isEqualTo("CP-7009-03-1");
+        assertThat(data.get("confirm_token")).isNotNull();
+    }
+
+    @Test
+    void agentChatShouldTreatStandaloneFastChargeWordAsDcPreference() {
+        ParkingSpot dcSpot = buildSpot(1L, "星星充电站", 201L, "SPOT-DC-001", "DC");
+        ParkingSpot acSpot = buildSpot(1L, "星星充电站", 202L, "SPOT-AC-001", "AC");
+        AgentService agentService = buildAgentService(
+                new SuccessfulReservationService(),
+                new StubParkingSpotService(dcSpot, acSpot));
+
+        List<AgentHistoryMessage> history = List.of(
+                stationHistory().get(0),
+                AgentHistoryMessage.builder()
+                        .role("assistant")
+                        .content("我已经锁定第一个充电站了，请告诉我开始时间、持续多久，以及是否需要快充/慢充。")
+                        .build());
+
+        AgentChatResponse response = agentService.agentChat(
+                AgentChatRequest.builder()
+                        .question("现在，持续两小时，快充")
+                        .lat(31.782)
+                        .lng(119.965)
+                        .history(history)
+                        .build(),
+                7L,
+                "req-standalone-fast");
+
+        assertThat(response.getType()).isEqualTo("reservation_pending");
+        assertThat(response.getContent()).contains("直流快充");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> data = (Map<String, Object>) response.getData();
+        assertThat(data.get("station_id")).isEqualTo(1L);
+        assertThat(data.get("spot_id")).isEqualTo(201L);
+        assertThat(data.get("spot_code")).isEqualTo("SPOT-DC-001");
+        assertThat(data.get("charging_type")).isEqualTo("直流快充");
+    }
+
+    @Test
+    void agentChatShouldContinueReservationAfterLlmPromptLocksStationById() {
+        ParkingSpot selectedSpot = buildSpot(2L, "理想超充站", 202L, "CP-7009-03-1", "DC");
+        AgentService agentService = buildAgentService(
+                new SuccessfulReservationService(),
+                new StubParkingSpotService(selectedSpot));
+
+        List<AgentHistoryMessage> history = List.of(
+                stationHistory().get(0),
+                AgentHistoryMessage.builder()
+                        .role("assistant")
+                        .content("""
+                                第二个充电站是“理想超充站”，站点ID为2。请告诉我以下信息以便为您查询可预约的车位：
+                                您希望预约的时间段（例如“现在开始1小时”或“明天下午3点到5点”）？
+                                是否需要快充或慢充？
+                                """)
+                        .build());
+
+        AgentChatResponse response = agentService.agentChat(
+                AgentChatRequest.builder()
+                        .question("现在开始，需要快充，时间两小时")
+                        .lat(31.782)
+                        .lng(119.965)
+                        .history(history)
+                        .build(),
+                7L,
+                "req-llm-lock-followup");
+
+        assertThat(response.getType()).isEqualTo("reservation_pending");
+        assertThat(response.getContent()).contains("理想超充站");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> data = (Map<String, Object>) response.getData();
+        assertThat(data.get("station_id")).isEqualTo(2L);
+        assertThat(data.get("station_name")).isEqualTo("理想超充站");
+        assertThat(data.get("spot_id")).isEqualTo(202L);
+        assertThat(data.get("confirm_token")).isNotNull();
+    }
+
+    @Test
+    void agentChatShouldDefaultToSlowChargeAfterFollowUpPromptWithoutExplicitType() {
+        ParkingSpot selectedSpot = buildSpot(2L, "理想超充站", 202L, "SPOT-AC-001", "AC");
+        AgentService agentService = buildAgentService(
+                new SuccessfulReservationService(),
+                new StubParkingSpotService(selectedSpot));
+
+        List<AgentHistoryMessage> history = List.of(
+                stationHistory().get(0),
+                AgentHistoryMessage.builder()
+                        .role("assistant")
+                        .content("""
+                                请稍等，我帮你查询第二个充电站（理想超充站）的空闲车位信息。为了更精准地推荐，请告诉我你希望预约的时间段（例如“现在开始两小时”或“明天下午3点到5点”），以及是否需要快充或慢充。
+                                """)
+                        .build());
+
+        AgentChatResponse response = agentService.agentChat(
+                AgentChatRequest.builder()
+                        .question("时间现在，时长两小时")
+                        .lat(31.782)
+                        .lng(119.965)
+                        .history(history)
+                        .build(),
+                7L,
+                "req-default-slow");
+
+        assertThat(response.getType()).isEqualTo("reservation_pending");
+        assertThat(response.getContent()).contains("理想超充站").contains("交流慢充");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> data = (Map<String, Object>) response.getData();
+        assertThat(data.get("station_id")).isEqualTo(2L);
+        assertThat(data.get("station_name")).isEqualTo("理想超充站");
+        assertThat(data.get("spot_id")).isEqualTo(202L);
+        assertThat(data.get("charging_type")).isEqualTo("交流慢充");
+        assertThat(data.get("confirm_token")).isNotNull();
+    }
+
+    @Test
+    void buildCardResponseShouldReturnPendingReservationForRecommendBookingToolFlow() throws Exception {
+        AgentService agentService = buildAgentService(new SuccessfulReservationService(), null);
+
+        @SuppressWarnings("unchecked")
+        ThreadLocal<Long> currentUserId = (ThreadLocal<Long>) ReflectionTestUtils.getField(agentService, "currentUserId");
+        currentUserId.set(7L);
+
+        Object recommendRecord = buildToolRecord(
+                "recommend_booking",
+                """
+                        {
+                          "spot_id": 201,
+                          "start_time": "2026-04-14T21:00:00",
+                          "end_time": "2026-04-14T23:00:00"
+                        }
+                        """,
+                """
+                        {
+                          "station_id": 1,
+                          "station_name": "星星充电站",
+                          "spot_id": 201,
+                          "spot_code": "SPOT-DC-001",
+                          "charging_type": "直流快充",
+                          "start_time": "2026-04-14T21:00:00",
+                          "end_time": "2026-04-14T23:00:00",
+                          "price_per_hour": 8,
+                          "reason": "原始推荐"
+                        }
+                        """);
+
+        @SuppressWarnings("unchecked")
+        AgentChatResponse response = ReflectionTestUtils.invokeMethod(
+                agentService,
+                "buildCardResponse",
+                "这是模型生成的文案",
+                List.of(recommendRecord),
+                stationHistory());
+
+        assertThat(response.getType()).isEqualTo("reservation_pending");
         assertThat(response.getContent()).contains("请确认预约信息");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> data = (Map<String, Object>) response.getData();
+        assertThat(data.get("station_id")).isEqualTo(1L);
+        assertThat(data.get("spot_id")).isEqualTo(201L);
+        assertThat(data.get("confirm_token")).isNotNull();
+    }
+
+    @Test
+    void buildCardResponseShouldReturnRecommendationForCrossStationToolFlow() throws Exception {
+        AgentService agentService = buildAgentService(new SuccessfulReservationService(), null);
+
+        @SuppressWarnings("unchecked")
+        ThreadLocal<Long> currentUserId = (ThreadLocal<Long>) ReflectionTestUtils.getField(agentService, "currentUserId");
+        currentUserId.set(7L);
+
+        Object acrossRecord = buildToolRecord(
+                "query_available_spots_across_stations",
+                """
+                        {
+                          "station_id": 1,
+                          "start_time": "2026-04-14T21:00:00",
+                          "end_time": "2026-04-14T23:00:00",
+                          "charging_type": "慢充"
+                        }
+                        """,
+                """
+                        {
+                          "station_id": 2,
+                          "station_name": "理想超充站",
+                          "station_order": 2,
+                          "charging_type": "交流慢充",
+                          "start_time": "2026-04-14T21:00:00",
+                          "end_time": "2026-04-14T23:00:00",
+                          "spots": [
+                            {
+                              "spot_id": 202,
+                              "车位编号": "SPOT-AC-001",
+                              "充电类型": "交流慢充",
+                              "每小时价格": 8
+                            }
+                          ],
+                          "checked_stations": [
+                            {
+                              "order": 1,
+                              "station_id": 1,
+                              "station_name": "星星充电站",
+                              "available_spot_count": 0
+                            },
+                            {
+                              "order": 2,
+                              "station_id": 2,
+                              "station_name": "理想超充站",
+                              "available_spot_count": 1
+                            }
+                          ],
+                          "message": "你指定的站点没有符合条件的车位，已继续检查第 2 个推荐站点，并找到交流慢充车位，站点是 理想超充站。"
+                        }
+                        """);
+        Object recommendRecord = buildToolRecord(
+                "recommend_booking",
+                """
+                        {
+                          "spot_id": 202,
+                          "start_time": "2026-04-14T21:00:00",
+                          "end_time": "2026-04-14T23:00:00"
+                        }
+                        """,
+                """
+                        {
+                          "station_id": 2,
+                          "station_name": "理想超充站",
+                          "spot_id": 202,
+                          "spot_code": "SPOT-AC-001",
+                          "charging_type": "交流慢充",
+                          "start_time": "2026-04-14T21:00:00",
+                          "end_time": "2026-04-14T23:00:00",
+                          "price_per_hour": 8,
+                          "reason": "原始推荐"
+                        }
+                        """);
+
+        @SuppressWarnings("unchecked")
+        AgentChatResponse response = ReflectionTestUtils.invokeMethod(
+                agentService,
+                "buildCardResponse",
+                "这是模型生成的文案",
+                List.of(acrossRecord, recommendRecord),
+                stationHistory());
+
+        assertThat(response.getType()).isEqualTo("recommend_booking");
+        assertThat(response.getContent())
+                .contains("星星充电站")
+                .contains("理想超充站")
+                .contains("按距离顺延");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> data = (Map<String, Object>) response.getData();
+        assertThat(data.get("station_id")).isEqualTo(2L);
+        assertThat(data.get("station_name")).isEqualTo("理想超充站");
+        assertThat(data.get("reason")).asString().contains("按距离顺延推荐");
+        assertThat(data).doesNotContainKey("confirm_token");
     }
 
     @Test
@@ -517,6 +888,13 @@ class AgentServiceTest {
         }
     }
 
+    private Object buildToolRecord(String name, String arguments, String result) throws Exception {
+        Class<?> toolRecordType = Class.forName("com.charging.service.AgentService$ToolRecord");
+        var constructor = toolRecordType.getDeclaredConstructor(String.class, String.class, String.class);
+        constructor.setAccessible(true);
+        return constructor.newInstance(name, arguments, result);
+    }
+
     private AgentService buildAgentService(ReservationService reservationService, ParkingSpotService parkingSpotService) {
         StubChargingStationService chargingStationService = new StubChargingStationService();
         StationDiscoveryService stationDiscoveryService = new StationDiscoveryService(chargingStationService);
@@ -528,13 +906,17 @@ class AgentServiceTest {
     }
 
     private ParkingSpot buildSpot(String spotCode, String pileType) {
-        return buildSpot(100L, spotCode, pileType);
+        return buildSpot(1L, "星星充电站", 100L, spotCode, pileType);
     }
 
     private ParkingSpot buildSpot(Long spotId, String spotCode, String pileType) {
+        return buildSpot(1L, "星星充电站", spotId, spotCode, pileType);
+    }
+
+    private ParkingSpot buildSpot(Long stationId, String stationName, Long spotId, String spotCode, String pileType) {
         ChargingStation station = ChargingStation.builder()
-                .id(1L)
-                .name("星星充电站")
+                .id(stationId)
+                .name(stationName)
                 .build();
 
         ChargingPile pile = ChargingPile.builder()

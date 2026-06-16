@@ -37,6 +37,7 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
                         @Param("startOfDay") LocalDateTime startOfDay,
                         @Param("endOfDay") LocalDateTime endOfDay);
 
-        @Query("SELECT r FROM Reservation r WHERE r.status = 1 AND r.startTime < :now")
-        List<Reservation> findExpiredReservations(@Param("now") LocalDateTime now);
+        @Query("SELECT r FROM Reservation r WHERE r.status = 1 AND (r.endTime <= :now OR r.startTime <= :graceCutoff)")
+        List<Reservation> findExpiredReservations(@Param("now") LocalDateTime now,
+                        @Param("graceCutoff") LocalDateTime graceCutoff);
 }

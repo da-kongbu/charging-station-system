@@ -12,4 +12,6 @@ public class QueryAvailableSpotsArgs {
     private String startTime;
     private String endTime;
     private String chargingType;
+    private String keyword;
+    private Integer maxStations;
 }

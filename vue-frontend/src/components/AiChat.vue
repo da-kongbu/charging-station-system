@@ -15,41 +15,36 @@
       <v-icon size="22">mdi-robot-outline</v-icon>
     </v-badge>
     <v-icon v-else size="22">mdi-robot-outline</v-icon>
-    <v-tooltip activator="parent" location="left">智能助手</v-tooltip>
-  </v-btn>
-
-  <v-btn
-    v-else
-    icon
-    color="grey-darken-1"
-    size="default"
-    position="fixed"
-    location="bottom end"
-    class="ma-4"
-    elevation="2"
-    @click="toggleChat"
-  >
-    <v-icon size="20">mdi-close</v-icon>
+    <v-tooltip activator="parent" location="left">智充助手</v-tooltip>
   </v-btn>
 
   <!-- Chat Window -->
-  <Transition name="chat-slide">
+  <Transition :name="isFullscreen ? 'chat-fade' : 'chat-slide'">
     <v-card
       v-if="isOpen"
       rounded="lg"
       elevation="8"
-      width="380"
-      class="chat-window"
+      :width="isFullscreen ? '100%' : 400"
+      :class="isFullscreen ? 'chat-fullscreen' : 'chat-window'"
     >
       <!-- Header -->
       <div class="chat-header pa-3 d-flex align-center justify-space-between">
         <div class="d-flex align-center ga-2">
-          <v-avatar color="rgba(255,255,255,0.25)" size="30">
+          <v-avatar color="rgba(255,255,255,0.25)" size="32">
             <v-icon size="18" color="white">mdi-robot-outline</v-icon>
           </v-avatar>
-          <div class="text-subtitle-2 font-weight-bold text-white">智能助手</div>
+          <div class="text-subtitle-2 font-weight-bold text-white">智充助手</div>
         </div>
-        <v-btn icon="mdi-close" variant="text" size="small" color="white" @click="toggleChat" />
+        <div class="d-flex align-center ga-1">
+          <v-btn
+            :icon="isFullscreen ? 'mdi-arrow-collapse' : 'mdi-arrow-expand'"
+            variant="text"
+            size="small"
+            color="white"
+            @click="isFullscreen = !isFullscreen"
+          />
+          <v-btn icon="mdi-close" variant="text" size="small" color="white" @click="toggleChat" />
+        </div>
       </div>
 
       <!-- Messages -->
@@ -232,6 +227,7 @@ const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
 const isOpen = ref(false)
+const isFullscreen = ref(false)
 const isLoading = ref(false)
 const inputText = ref('')
 const messages = ref([])
@@ -545,12 +541,25 @@ watch(messages, scrollToBottom, { deep: true })
 </script>
 
 <style scoped>
+/* Popup mode (default) */
 .chat-window {
   position: fixed;
   bottom: 72px;
   right: 20px;
   z-index: 9999;
-  height: 500px;
+  height: 520px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Fullscreen mode */
+.chat-fullscreen {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 9999;
+  height: 100% !important;
+  border-radius: 0 !important;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -572,6 +581,18 @@ watch(messages, scrollToBottom, { deep: true })
   min-height: 0;
 }
 
+/* Fullscreen messages wider */
+.chat-fullscreen .chat-messages {
+  padding: 24px;
+  max-width: 860px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.chat-fullscreen .message-content {
+  max-width: 65%;
+}
+
 .chat-messages::-webkit-scrollbar { width: 4px; }
 .chat-messages::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; }
 
@@ -584,7 +605,7 @@ watch(messages, scrollToBottom, { deep: true })
 .message.user { flex-direction: row-reverse; }
 
 .message-content {
-  max-width: 80%;
+  max-width: 70%;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -592,9 +613,9 @@ watch(messages, scrollToBottom, { deep: true })
 
 .message-bubble {
   max-width: 100%;
-  padding: 10px 14px;
+  padding: 12px 16px;
   border-radius: 16px;
-  font-size: 0.875rem;
+  font-size: 0.95rem;
   line-height: 1.6;
   word-break: break-word;
 }
@@ -731,13 +752,21 @@ watch(messages, scrollToBottom, { deep: true })
   box-shadow: 0 3px 12px rgba(0,0,0,0.12);
 }
 
-/* 动画 */
+/* Popup slide animation */
 .chat-slide-enter-active, .chat-slide-leave-active {
   transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .chat-slide-enter-from, .chat-slide-leave-to {
   opacity: 0;
   transform: translateY(20px) scale(0.95);
+}
+
+/* Fullscreen fade animation */
+.chat-fade-enter-active, .chat-fade-leave-active {
+  transition: all 0.25s ease;
+}
+.chat-fade-enter-from, .chat-fade-leave-to {
+  opacity: 0;
 }
 
 @keyframes bounce {
@@ -751,6 +780,7 @@ watch(messages, scrollToBottom, { deep: true })
 }
 
 @media (max-width: 480px) {
-  .v-card { width: 100% !important; height: 100% !important; position: fixed !important; bottom: 0 !important; right: 0 !important; margin: 0 !important; border-radius: 0 !important; }
+  .message-content { max-width: 85%; }
+  .chat-messages { padding: 12px; }
 }
 </style>

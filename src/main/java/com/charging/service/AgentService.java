@@ -3,6 +3,7 @@ package com.charging.service;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
+import com.alibaba.fastjson2.JSONReader;
 import com.charging.dto.ChargingStationDTO;
 import com.charging.dto.ReservationDTO;
 import com.charging.dto.ReservationRequest;
@@ -12,6 +13,7 @@ import com.charging.dto.agent.AgentHistoryMessage;
 import com.charging.dto.agent.AvailableSpotCardData;
 import com.charging.dto.agent.QueryAvailableSpotsArgs;
 import com.charging.dto.agent.QueryStationByKeywordArgs;
+import com.charging.dto.agent.StationCardData;
 import com.charging.dto.agent.StationDetailCardData;
 import com.charging.dto.agent.UserReservationCardData;
 import com.charging.dto.agent.RecommendBookingCardData;
@@ -96,11 +98,14 @@ public class AgentService {
     private static final DateTimeFormatter SYSTEM_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
     private static final Pattern STATION_LIST_ITEM_PATTERN = Pattern.compile("(\\d+)\\.\\s+id=(\\d+)\\s+(.*?)\\s+可用桩");
     private static final Pattern STATION_DETAIL_PATTERN = Pattern.compile("\\[站点详情]\\s+id=(\\d+)\\s+(.*?)\\s+可用桩");
+    private static final Pattern AVAILABLE_SPOT_LIST_ITEM_PATTERN = Pattern.compile("(\\d+)\\.\\s+spot_id=(\\d+)\\s+(\\S+)");
+    private static final Pattern LOCKED_STATION_ID_PATTERN = Pattern.compile("站点id为\\s*(\\d+)");
     private static final Pattern PENDING_CONFIRM_TOKEN_PATTERN = Pattern.compile("confirm_token=([^\\s]+)");
     private static final Pattern PENDING_STATION_ID_PATTERN = Pattern.compile("station_id=(\\d+)");
     private static final Pattern PENDING_SPOT_ID_PATTERN = Pattern.compile("spot_id=(\\d+)");
     private static final Pattern PENDING_CHARGING_TYPE_PATTERN = Pattern.compile("charging_type=([^\\s]+)");
     private static final Duration PENDING_RESERVATION_TTL = Duration.ofMinutes(15);
+    private static final String DEFAULT_RESERVATION_CHARGING_TYPE = "AC";
 
     private static final String AGENT_SYSTEM_PROMPT = """
             你是"智充助手"，一个拥有实时数据查询能力和领域知识库的共享充电桩 AI 智能体。
@@ -116,7 +121,7 @@ public class AgentService {
             3. 如果没有找到数据，诚实告知。
             4. 当用户指定了具体充电站名称或品牌（如"国家电网"、"特来电"），必须用 query_station_by_keyword 按该关键词搜索。
             5. **上下文理解**：当用户说"第一个"、"帮我预约刚才那个"时，回顾对话历史中你返回的充电站列表，用对应的站点 ID 操作。绝不能凭空编造站点。
-            6. 当用户想预约时：用 query_available_spots 查车位 → 调用 recommend_booking 生成推荐方案。系统会引导用户到预约确认页面完成预约。你不需要也不能直接创建预约，只需推荐即可。
+            6. 当用户想预约时：如果只针对一个明确站点查车位，用 query_available_spots 查车位 → 调用 recommend_booking 生成推荐方案。若用户要求快充/慢充且表达了“没有就换下一个站”“顺延推荐”“找别的站”等含义，必须改用 query_available_spots_across_stations，按推荐顺序从指定站点继续查到后续站点，再对找到的第一个车位调用 recommend_booking。若顺延后推荐的是其他站点，要先明确说明“原站点暂无符合条件车位”，再展示 AI 推荐方案，不要把用户未确认的新站点直接当成已确认预约。若用户没有明确说明快充/慢充，默认按慢充处理，不要继续追问类型。系统会引导用户到预约确认页面完成预约。你不需要也不能直接创建预约，只需推荐即可。
             7. 如果用户未登录就尝试预约，请提示"请先登录后再进行预约操作"。
             8. **回复风格**：简洁、有层次。推荐站点时，先给一句总数总结，再逐项给出推荐理由（距离、空闲桩、适合优先/备选），最后加一句引导（如"点击下方卡片查看详情"）。不要写长段落。
             9. 当用户询问充电桩使用方法、计费规则、故障排除等常识性问题时，如果系统提供了【参考知识】，请优先基于这些知识回答，不要编造信息。
@@ -330,7 +335,7 @@ public class AgentService {
                                 currentRequestId.get(), text.length());
                     }
                     if (!toolRecords.isEmpty()) {
-                        return buildCardResponse(text, toolRecords);
+                        return buildCardResponse(text, toolRecords, history);
                     } else {
                         return AgentChatResponse.text(text);
                     }
@@ -377,7 +382,8 @@ public class AgentService {
     /**
      * 根据 tool 调用记录，智能判断应该附加什么类型的卡片
      */
-    private AgentChatResponse buildCardResponse(String textContent, List<ToolRecord> toolRecords) {
+    private AgentChatResponse buildCardResponse(String textContent, List<ToolRecord> toolRecords,
+                                                List<AgentHistoryMessage> history) {
         String lastToolName = toolRecords.get(toolRecords.size() - 1).name;
         String result = toolRecords.get(toolRecords.size() - 1).result;
 
@@ -389,11 +395,11 @@ public class AgentService {
                 case "query_station_detail" -> {
                     yield AgentChatResponse.of("station_detail", textContent, JSON.parseObject(result));
                 }
-                case "query_available_spots" -> {
+                case "query_available_spots", "query_available_spots_across_stations" -> {
                     yield AgentChatResponse.of("available_spots", textContent, extractSpotCardData(result));
                 }
                 case "recommend_booking" -> {
-                    yield AgentChatResponse.of("recommend_booking", textContent, JSON.parseObject(result));
+                    yield buildRecommendBookingResponse(toolRecords, history, textContent);
                 }
                 case "query_user_reservations" -> {
                     yield AgentChatResponse.of("reservations", textContent, JSON.parseArray(result));
@@ -420,6 +426,126 @@ public class AgentService {
         return List.of();
     }
 
+    private AgentChatResponse buildRecommendBookingResponse(List<ToolRecord> toolRecords,
+                                                            List<AgentHistoryMessage> history,
+                                                            String textContent) {
+        ToolRecord recommendRecord = toolRecords.get(toolRecords.size() - 1);
+        RecommendBookingCardData cardData = parseRecommendBookingCardData(recommendRecord.result);
+        if (cardData == null) {
+            return AgentChatResponse.text(textContent);
+        }
+        if (currentUserId.get() == null) {
+            return AgentChatResponse.text("请先登录后再进行预约操作。");
+        }
+
+        CrossStationBookingContext crossStationContext = resolveCrossStationBookingContext(toolRecords, cardData);
+        String requestedStationName = crossStationContext != null
+                ? crossStationContext.requestedStationName()
+                : cardData.getStationName();
+        RecommendBookingCardData normalizedCardData = normalizeRecommendBookingCardData(cardData, requestedStationName);
+
+        if (crossStationContext != null && crossStationContext.switchedStation()) {
+            PendingReservationContext pendingContext = findLatestPendingReservationContext(history);
+            invalidatePendingReservation(pendingContext != null ? pendingContext.confirmToken() : null);
+            return AgentChatResponse.of(
+                    "recommend_booking",
+                    buildCrossStationRecommendationMessage(requestedStationName, normalizedCardData),
+                    toRecommendBookingMap(normalizedCardData));
+        }
+
+        PendingReservationContext pendingContext = findLatestPendingReservationContext(history);
+        return createPendingReservationResponse(
+                normalizedCardData,
+                pendingContext != null ? pendingContext.confirmToken() : null);
+    }
+
+    private RecommendBookingCardData parseRecommendBookingCardData(String json) {
+        try {
+            if (json == null || !json.startsWith("{")) {
+                return null;
+            }
+            JSONObject data = JSON.parseObject(json);
+            if (data == null || data.getLong("spot_id") == null) {
+                return null;
+            }
+            return RecommendBookingCardData.builder()
+                    .stationId(data.getLong("station_id"))
+                    .stationName(data.getString("station_name"))
+                    .spotId(data.getLong("spot_id"))
+                    .spotCode(data.getString("spot_code"))
+                    .chargingType(data.getString("charging_type"))
+                    .startTime(data.getString("start_time"))
+                    .endTime(data.getString("end_time"))
+                    .pricePerHour(data.getBigDecimal("price_per_hour"))
+                    .reason(data.getString("reason"))
+                    .build();
+        } catch (Exception e) {
+            log.warn("recommend_booking_parse_failed | requestId={} | message={}", currentRequestId.get(), e.getMessage());
+            return null;
+        }
+    }
+
+    private CrossStationBookingContext resolveCrossStationBookingContext(List<ToolRecord> toolRecords,
+                                                                         RecommendBookingCardData cardData) {
+        ToolRecord acrossRecord = findLatestToolRecord(toolRecords, "query_available_spots_across_stations");
+        if (acrossRecord == null || acrossRecord.result == null || !acrossRecord.result.startsWith("{")) {
+            return null;
+        }
+
+        try {
+            JSONObject arguments = acrossRecord.arguments != null && !acrossRecord.arguments.isBlank()
+                    ? JSON.parseObject(acrossRecord.arguments)
+                    : new JSONObject();
+            JSONObject result = JSON.parseObject(acrossRecord.result);
+
+            Long preferredStationId = arguments.getLong("station_id");
+            Long resolvedStationId = result.getLong("station_id");
+            Integer stationOrder = result.getInteger("station_order");
+
+            String requestedStationName = null;
+            JSONArray checkedStations = result.getJSONArray("checked_stations");
+            if (checkedStations != null && !checkedStations.isEmpty()) {
+                requestedStationName = checkedStations.getJSONObject(0).getString("station_name");
+            }
+            if ((requestedStationName == null || requestedStationName.isBlank()) && preferredStationId != null) {
+                requestedStationName = stationService.findById(preferredStationId)
+                        .map(ChargingStationDTO::getName)
+                        .orElse(null);
+            }
+
+            boolean switchedStation = stationOrder != null && stationOrder > 1;
+            if (!switchedStation && preferredStationId != null && resolvedStationId != null) {
+                switchedStation = !preferredStationId.equals(resolvedStationId);
+            }
+            if (!switchedStation
+                    && requestedStationName != null
+                    && cardData.getStationName() != null
+                    && !requestedStationName.equals(cardData.getStationName())
+                    && checkedStations != null
+                    && checkedStations.size() > 1) {
+                switchedStation = true;
+            }
+            return new CrossStationBookingContext(switchedStation, requestedStationName);
+        } catch (Exception e) {
+            log.warn("cross_station_context_parse_failed | requestId={} | message={}",
+                    currentRequestId.get(), e.getMessage());
+            return null;
+        }
+    }
+
+    private ToolRecord findLatestToolRecord(List<ToolRecord> toolRecords, String name) {
+        if (toolRecords == null || toolRecords.isEmpty()) {
+            return null;
+        }
+        for (int i = toolRecords.size() - 1; i >= 0; i--) {
+            ToolRecord record = toolRecords.get(i);
+            if (record != null && Objects.equals(record.name, name)) {
+                return record;
+            }
+        }
+        return null;
+    }
+
     /**
      * 从 query_available_spots 的 JSON 结果中提取卡片数据
      */
@@ -427,6 +553,13 @@ public class AgentService {
         try {
             if (json != null && json.startsWith("[")) {
                 return JSON.parseArray(json).toJavaList(Object.class);
+            }
+            if (json != null && json.startsWith("{")) {
+                JSONObject obj = JSON.parseObject(json);
+                JSONArray spots = obj.getJSONArray("spots");
+                if (spots != null) {
+                    return spots.toJavaList(Object.class);
+                }
             }
         } catch (Exception e) {
             log.warn("提取车位卡片数据失败", e);
@@ -456,6 +589,16 @@ public class AgentService {
                             args.getEndTime(),
                             args.getChargingType());
                 }
+                case "query_available_spots_across_stations" -> {
+                    QueryAvailableSpotsArgs args = parseArgs(arguments, QueryAvailableSpotsArgs.class);
+                    yield queryAvailableSpotsAcrossStations(
+                            args.getStationId(),
+                            args.getStartTime(),
+                            args.getEndTime(),
+                            args.getChargingType(),
+                            args.getKeyword(),
+                            args.getMaxStations());
+                }
                 case "recommend_booking" -> {
                     JSONObject args = JSON.parseObject(arguments);
                     yield recommendBooking(
@@ -484,7 +627,7 @@ public class AgentService {
         try {
             LocalDateTime startTime = LocalDateTime.parse(startTimeStr, DateTimeFormatter.ISO_DATE_TIME);
             LocalDateTime endTime = LocalDateTime.parse(endTimeStr, DateTimeFormatter.ISO_DATE_TIME);
-            String normalizedChargingType = normalizeChargingType(chargingType);
+            String normalizedChargingType = normalizeReservationChargingType(chargingType);
             if (!endTime.isAfter(startTime)) {
                 return "结束时间必须晚于开始时间";
             }
@@ -527,6 +670,168 @@ public class AgentService {
                     currentRequestId.get(), stationId, startTimeStr, endTimeStr, chargingType, e);
             return "查询可用车位失败，请稍后再试。";
         }
+    }
+
+    /**
+     * 工具5：按推荐顺序跨站点查找可用车位
+     * 当前站点不满足快充/慢充条件时，继续检查后续推荐站点。
+     */
+    private String queryAvailableSpotsAcrossStations(Long preferredStationId, String startTimeStr, String endTimeStr,
+                                                     String chargingType, String keyword, Integer maxStations) {
+        if (startTimeStr == null || endTimeStr == null) return "请提供开始和结束时间";
+
+        try {
+            LocalDateTime startTime = LocalDateTime.parse(startTimeStr, DateTimeFormatter.ISO_DATE_TIME);
+            LocalDateTime endTime = LocalDateTime.parse(endTimeStr, DateTimeFormatter.ISO_DATE_TIME);
+            String normalizedChargingType = normalizeReservationChargingType(chargingType);
+            if (!endTime.isAfter(startTime)) {
+                return "结束时间必须晚于开始时间";
+            }
+            if (Duration.between(startTime, endTime).toMinutes() > 12 * 60) {
+                return "单次预约时长不能超过12小时";
+            }
+
+            List<StationCardData> candidates = buildStationCandidates(preferredStationId, keyword,
+                    normalizedChargingType, maxStations);
+            if (candidates.isEmpty()) {
+                if (normalizedChargingType != null) {
+                    return "当前没有找到支持" + displayChargingType(normalizedChargingType) + "的候选充电站。";
+                }
+                return "当前没有找到可用于预约的候选充电站。";
+            }
+
+            List<ParkingSpot> allSpots = parkingSpotService.findAvailableSpotsForTime(startTime, endTime);
+            List<Map<String, Object>> checkedStations = new ArrayList<>();
+            for (int i = 0; i < candidates.size(); i++) {
+                StationCardData station = candidates.get(i);
+                List<AvailableSpotCardData> spots = collectAvailableSpotsForStation(
+                        allSpots, station.getId(), normalizedChargingType);
+                checkedStations.add(toCheckedStationMap(station, i + 1, spots.size()));
+
+                if (!spots.isEmpty()) {
+                    Map<String, Object> result = new LinkedHashMap<>();
+                    result.put("station_id", station.getId());
+                    result.put("station_name", station.getName());
+                    result.put("station_order", i + 1);
+                    if (station.getDistanceKm() != null) {
+                        result.put("distance_km", station.getDistanceKm());
+                    }
+                    result.put("charging_type", normalizedChargingType != null ? displayChargingType(normalizedChargingType) : null);
+                    result.put("start_time", startTime.toString());
+                    result.put("end_time", endTime.toString());
+                    result.put("spots", toAvailableSpotMaps(spots));
+                    result.put("checked_stations", checkedStations);
+                    result.put("message", buildAcrossStationSuccessMessage(station, i + 1, normalizedChargingType));
+                    return JSON.toJSONString(result);
+                }
+            }
+
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("charging_type", normalizedChargingType != null ? displayChargingType(normalizedChargingType) : null);
+            result.put("start_time", startTime.toString());
+            result.put("end_time", endTime.toString());
+            result.put("checked_stations", checkedStations);
+            result.put("message", buildAcrossStationEmptyMessage(candidates.size(), normalizedChargingType));
+            return JSON.toJSONString(result);
+        } catch (Exception e) {
+            log.error("query_available_spots_across_stations_failed | requestId={} | preferredStationId={} | startTime={} | endTime={} | chargingType={}",
+                    currentRequestId.get(), preferredStationId, startTimeStr, endTimeStr, chargingType, e);
+            return "跨站点查询可用车位失败，请稍后再试。";
+        }
+    }
+
+    private List<AvailableSpotCardData> collectAvailableSpotsForStation(List<ParkingSpot> allSpots, Long stationId,
+                                                                        String normalizedChargingType) {
+        List<AvailableSpotCardData> result = new ArrayList<>();
+        if (allSpots == null || stationId == null) {
+            return result;
+        }
+
+        for (ParkingSpot spot : allSpots) {
+            if (spot.getPile() == null || spot.getPile().getStation() == null
+                    || !stationId.equals(spot.getPile().getStation().getId())) {
+                continue;
+            }
+            String pileType = spot.getPile().getPileType();
+            if (normalizedChargingType != null && !normalizedChargingType.equalsIgnoreCase(normalizeChargingType(pileType))) {
+                continue;
+            }
+            result.add(AvailableSpotCardData.builder()
+                    .spotId(spot.getId())
+                    .spotCode(spot.getSpotCode())
+                    .spotType(spot.getSpotType())
+                    .chargingType(pileType != null ? displayChargingType(pileType) : null)
+                    .pricePerHour(spot.getPricePerHour())
+                    .serviceFee(spot.getServiceFee())
+                    .build());
+        }
+        return result;
+    }
+
+    private List<StationCardData> buildStationCandidates(Long preferredStationId, String keyword,
+                                                         String normalizedChargingType, Integer maxStations) {
+        int limit = maxStations != null && maxStations > 0 ? Math.min(maxStations, 20) : 10;
+        StationDiscoveryService.StationDiscoveryResult discoveryResult = stationDiscoveryService.queryNearbyStations(
+                currentLat.get(), currentLng.get(), keyword, normalizedChargingType, limit);
+        List<StationCardData> candidates = new ArrayList<>(discoveryResult.stations());
+
+        if (preferredStationId == null) {
+            return candidates;
+        }
+
+        Optional<StationCardData> selected = candidates.stream()
+                .filter(station -> preferredStationId.equals(station.getId()))
+                .findFirst();
+        if (selected.isPresent()) {
+            candidates.removeIf(station -> preferredStationId.equals(station.getId()));
+            candidates.add(0, selected.get());
+            return candidates;
+        }
+
+        stationService.findById(preferredStationId).ifPresent(station -> candidates.add(0,
+                StationCardData.builder()
+                        .id(station.getId())
+                        .name(station.getName())
+                        .address(station.getAddress())
+                        .city(station.getCity())
+                        .pileCount(station.getPileCount())
+                        .availablePileCount(station.getAvailablePileCount())
+                        .businessHours(station.getBusinessHours())
+                        .build()));
+        return candidates;
+    }
+
+    private Map<String, Object> toCheckedStationMap(StationCardData station, int order, int availableSpotCount) {
+        Map<String, Object> info = new LinkedHashMap<>();
+        info.put("order", order);
+        info.put("station_id", station.getId());
+        info.put("station_name", station.getName());
+        if (station.getDistanceKm() != null) {
+            info.put("distance_km", station.getDistanceKm());
+        }
+        info.put("available_spot_count", availableSpotCount);
+        return info;
+    }
+
+    private String buildAcrossStationSuccessMessage(StationCardData station, int order, String chargingType) {
+        StringBuilder message = new StringBuilder();
+        if (order == 1) {
+            message.append("已在你指定的站点找到");
+        } else {
+            message.append("你指定的站点没有符合条件的车位，已继续检查第 ").append(order).append(" 个推荐站点，并找到");
+        }
+        message.append(chargingType != null ? displayChargingType(chargingType) : "可用").append("车位");
+        if (station.getName() != null && !station.getName().isBlank()) {
+            message.append("，站点是 ").append(station.getName());
+        }
+        message.append("。");
+        return message.toString();
+    }
+
+    private String buildAcrossStationEmptyMessage(int checkedCount, String chargingType) {
+        return "已按推荐顺序检查 " + checkedCount + " 个站点，但指定时间段内暂未找到可用的"
+                + (chargingType != null ? displayChargingType(chargingType) : "")
+                + "车位，建议更换预约时间或充电类型。";
     }
 
     /**
@@ -707,7 +1012,7 @@ public class AgentService {
             String fallback = switch (record.name) {
                 case "query_all_stations", "query_station_by_keyword" -> summarizeStationList(record.result);
                 case "query_station_detail" -> summarizeStationDetail(record.result);
-                case "query_available_spots" -> summarizeAvailableSpots(record.result);
+                case "query_available_spots", "query_available_spots_across_stations" -> summarizeAvailableSpots(record.result);
                 case "recommend_booking" -> summarizeRecommendation(record.result);
                 case "query_user_reservations" -> summarizeUserReservations(record.result);
                 default -> "";
@@ -762,6 +1067,34 @@ public class AgentService {
 
     private String summarizeAvailableSpots(String json) {
         if (json == null || json.isBlank()) return "查询可用车位失败。";
+        if (json.startsWith("{")) {
+            try {
+                JSONObject result = JSON.parseObject(json);
+                String message = result.getString("message");
+                JSONArray spots = result.getJSONArray("spots");
+                if (spots == null || spots.isEmpty()) {
+                    return message != null && !message.isBlank() ? message : "该时间段内没有可用车位。";
+                }
+
+                StringBuilder sb = new StringBuilder(message != null && !message.isBlank() ? message : "已找到可用车位。");
+                sb.append("\n站点：").append(defaultText(result.getString("station_name"), "未知站点"));
+                if (result.containsKey("distance_km")) {
+                    sb.append("（约 ").append(result.get("distance_km")).append(" km）");
+                }
+                sb.append("\n可用车位：");
+                for (int i = 0; i < spots.size(); i++) {
+                    JSONObject s = spots.getJSONObject(i);
+                    sb.append("\n").append(i + 1).append(". ").append(defaultText(s.getString("车位编号"), "未知"));
+                    if (s.getString("充电类型") != null) {
+                        sb.append("（").append(s.getString("充电类型")).append("）");
+                    }
+                    sb.append("，").append(s.get("每小时价格")).append("元/小时");
+                }
+                return sb.toString();
+            } catch (Exception e) {
+                return "";
+            }
+        }
         if (!json.startsWith("[")) return json; // 已是错误文本
         try {
             JSONArray spots = JSON.parseArray(json);
@@ -817,7 +1150,7 @@ public class AgentService {
     }
 
     private <T> T parseArgs(String arguments, Class<T> clazz) {
-        return JSON.parseObject(arguments, clazz);
+        return JSON.parseObject(arguments, clazz, JSONReader.Feature.SupportSmartMatch);
     }
 
     private List<Map<String, Object>> toAvailableSpotMaps(List<AvailableSpotCardData> spots) {
@@ -963,10 +1296,10 @@ public class AgentService {
 
     private String extractReservationChargingType(String userQuestion) {
         String normalized = normalizeQuestion(userQuestion);
-        if (containsAny(normalized, List.of("要快充", "类型要快充", "类型快充", "快充车位", "直流", "dc"))) {
+        if (containsAny(normalized, List.of("要快充", "类型要快充", "类型快充", "快充车位", "快充", "直流", "dc"))) {
             return "DC";
         }
-        if (containsAny(normalized, List.of("要慢充", "类型要慢充", "类型慢充", "慢充车位", "交流", "ac"))) {
+        if (containsAny(normalized, List.of("要慢充", "类型要慢充", "类型慢充", "慢充车位", "慢充", "交流", "ac"))) {
             return "AC";
         }
         return null;
@@ -979,11 +1312,16 @@ public class AgentService {
         }
 
         String normalized = normalizeQuestion(userQuestion);
-        if (containsAny(normalized, List.of("确认", "取消", "改约", "换一个", "如果", "要是", "否则", "或者", "优先"))) {
+        boolean crossStationFallbackRequest = isCrossStationFallbackRequest(normalized);
+        if (!crossStationFallbackRequest
+                && containsAny(normalized, List.of("确认", "取消", "改约", "换一个", "如果", "要是", "否则", "或者", "优先"))) {
             return PreparsedReservationIntent.notMatched();
         }
 
-        StationSelection selection = resolveStationSelection(userQuestion, history);
+        SpotSelection spotSelection = resolveSpotSelection(userQuestion, history);
+        StationSelection selection = spotSelection != null
+                ? new StationSelection(spotSelection.stationId(), spotSelection.stationName())
+                : resolveStationSelection(userQuestion, history);
         if (selection == null) {
             return PreparsedReservationIntent.notMatched();
         }
@@ -1003,6 +1341,9 @@ public class AgentService {
         if (chargingType == null && pendingModification) {
             chargingType = pendingContext.chargingType();
         }
+        if (chargingType == null) {
+            chargingType = DEFAULT_RESERVATION_CHARGING_TYPE;
+        }
 
         boolean hasReservationVerb = containsAny(normalized, List.of("预约", "预定", "帮我约", "帮我预约"));
         if (!hasReservationVerb
@@ -1018,8 +1359,20 @@ public class AgentService {
                 timeRange.startTime(),
                 timeRange.endTime(),
                 chargingType,
+                spotSelection != null ? spotSelection.spotId() : null,
                 pendingModification ? pendingContext.confirmToken() : null);
     }
+
+    private boolean isCrossStationFallbackRequest(String normalizedQuestion) {
+        if (normalizedQuestion == null || normalizedQuestion.isBlank()) {
+            return false;
+        }
+        boolean mentionsChargingType = containsAny(normalizedQuestion, List.of("快充", "慢充", "dc", "ac"));
+        boolean mentionsFallback = containsAny(normalizedQuestion, List.of(
+                "没有", "没空", "无空", "顺延", "下一个", "别的站", "其他站", "换站", "继续找"));
+        return mentionsChargingType && mentionsFallback;
+    }
+
 
     private boolean isImplicitReservationFollowUp(String userQuestion, List<AgentHistoryMessage> history,
                                                   StationSelection selection, TimeRange timeRange) {
@@ -1075,50 +1428,65 @@ public class AgentService {
             return AgentChatResponse.text("请先登录后再进行预约操作。");
         }
 
-        String availableSpotsResult = queryAvailableSpots(
+        if (intent.spotId() != null) {
+            String recommendationResult = recommendBooking(
+                    intent.spotId(),
+                    intent.startTime().toString(),
+                    intent.endTime().toString());
+            RecommendBookingCardData cardData = parseRecommendBookingCardData(recommendationResult);
+            if (cardData == null) {
+                return AgentChatResponse.text(recommendationResult != null ? recommendationResult : "暂时无法生成预约方案。");
+            }
+            return createPendingReservationResponse(cardData, intent.previousConfirmToken());
+        }
+
+        String availableSpotsResult = queryAvailableSpotsAcrossStations(
                 intent.stationId(),
                 intent.startTime().toString(),
                 intent.endTime().toString(),
-                intent.chargingType());
-        if (availableSpotsResult == null || !availableSpotsResult.startsWith("[")) {
+                intent.chargingType(),
+                null,
+                10);
+        if (availableSpotsResult == null || !availableSpotsResult.startsWith("{")) {
             return AgentChatResponse.text(availableSpotsResult != null ? availableSpotsResult : "暂时无法查询可用车位。");
         }
 
-        JSONArray spots = JSON.parseArray(availableSpotsResult);
+        JSONObject result = JSON.parseObject(availableSpotsResult);
+        JSONArray spots = result.getJSONArray("spots");
         if (spots == null || spots.isEmpty()) {
-            return AgentChatResponse.text("该时间段内没有符合条件的可用车位。");
+            String message = result.getString("message");
+            return AgentChatResponse.text(message != null && !message.isBlank() ? message : "该时间段内没有符合条件的可用车位。");
         }
 
-        // 取第一个可用车位作为推荐
         JSONObject firstSpot = spots.getJSONObject(0);
+        Long stationId = result.getLong("station_id");
+        String stationName = result.getString("station_name");
         Long spotId = firstSpot.getLong("spot_id");
 
         RecommendBookingCardData cardData = RecommendBookingCardData.builder()
-                .stationId(intent.stationId())
-                .stationName(intent.stationName())
+                .stationId(stationId)
+                .stationName(stationName)
                 .spotId(spotId)
                 .spotCode(firstSpot.getString("车位编号"))
                 .chargingType(firstSpot.getString("充电类型"))
                 .startTime(intent.startTime().toString())
                 .endTime(intent.endTime().toString())
                 .pricePerHour(firstSpot.getBigDecimal("每小时价格"))
-                .reason(buildRecommendationReason(intent))
+                .reason(buildRecommendationReason(intent.stationName(), stationName, firstSpot.getString("充电类型")))
                 .build();
 
-        invalidatePendingReservation(intent.previousConfirmToken());
-        cleanupExpiredPendingReservations();
-        String confirmToken = UUID.randomUUID().toString().replace("-", "");
-        pendingReservations.put(confirmToken, new PendingReservation(
-                currentUserId.get(),
-                spotId,
-                intent.startTime(),
-                intent.endTime(),
-                LocalDateTime.now(clock)));
+        boolean switchedStation = stationId != null
+                && intent.stationId() != null
+                && !stationId.equals(intent.stationId());
+        if (switchedStation) {
+            invalidatePendingReservation(intent.previousConfirmToken());
+            return AgentChatResponse.of(
+                    "recommend_booking",
+                    buildCrossStationRecommendationMessage(intent.stationName(), cardData),
+                    toRecommendBookingMap(cardData));
+        }
 
-        return AgentChatResponse.of(
-                "reservation_pending",
-                buildDeterministicReservationMessage(intent),
-                toPendingReservationMap(confirmToken, cardData));
+        return createPendingReservationResponse(cardData, intent.previousConfirmToken());
     }
 
     private AgentChatResponse executeDeterministicStationDetail(PreparsedStationDetailIntent intent) {
@@ -1136,7 +1504,7 @@ public class AgentService {
                 JSON.parseObject(detailResult));
     }
 
-    private String buildDeterministicReservationMessage(PreparsedReservationIntent intent) {
+    private String buildDeterministicReservationMessage(PreparsedReservationIntent intent, String stationName) {
         StringBuilder message = new StringBuilder("我已为你找到");
         if (intent.chargingType() != null) {
             message.append(displayChargingType(intent.chargingType()));
@@ -1144,22 +1512,114 @@ public class AgentService {
             message.append("符合条件的");
         }
         message.append("车位");
-        if (intent.stationName() != null && !intent.stationName().isBlank()) {
-            message.append("，站点是 ").append(intent.stationName());
+        if (stationName != null && !stationName.isBlank()) {
+            message.append("，站点是 ").append(stationName);
+            if (!stationName.equals(intent.stationName())) {
+                message.append("（原站点暂无符合条件车位，已顺延推荐）");
+            }
         }
         message.append("。请确认预约信息，如需修改时段或车型偏好也可以直接告诉我。");
         return message.toString();
     }
 
-    private String buildRecommendationReason(PreparsedReservationIntent intent) {
+    private String buildRecommendationReason(String requestedStationName, String stationName, String chargingType) {
         StringBuilder reason = new StringBuilder("基于您的需求推荐");
-        if (intent.chargingType() != null) {
-            reason.append(displayChargingType(intent.chargingType())).append("车位");
+        if (chargingType != null && !chargingType.isBlank()) {
+            reason.append(chargingType).append("车位");
+        } else {
+            reason.append("可用车位");
         }
-        if (intent.stationName() != null && !intent.stationName().isBlank()) {
-            reason.append("，站点：").append(intent.stationName());
+        if (stationName != null && !stationName.isBlank()) {
+            reason.append("，站点：").append(stationName);
+        }
+        if (requestedStationName != null
+                && stationName != null
+                && !stationName.isBlank()
+                && !stationName.equals(requestedStationName)) {
+            reason.append("（原站点暂无符合条件车位，已按距离顺延推荐）");
         }
         return reason.toString();
+    }
+
+    private String buildCrossStationRecommendationMessage(String requestedStationName, RecommendBookingCardData cardData) {
+        String currentStationName = defaultText(requestedStationName, "当前站点");
+        StringBuilder message = new StringBuilder(currentStationName);
+        if (cardData.getChargingType() != null && !cardData.getChargingType().isBlank()) {
+            message.append("当前没有可用的").append(cardData.getChargingType()).append("车位");
+        } else {
+            message.append("在该时间段没有可用车位");
+        }
+        message.append("，我已按距离顺延为你推荐");
+        if (cardData.getStationName() != null && !cardData.getStationName().isBlank()) {
+            message.append(cardData.getStationName());
+        } else {
+            message.append("下一个可预约站点");
+        }
+        message.append("。下面是 AI 推荐方案，点击可查看详情并继续预约。");
+        return message.toString();
+    }
+
+    private AgentChatResponse createPendingReservationResponse(RecommendBookingCardData cardData,
+                                                               String previousConfirmToken) {
+        try {
+            LocalDateTime startTime = LocalDateTime.parse(cardData.getStartTime(), DateTimeFormatter.ISO_DATE_TIME);
+            LocalDateTime endTime = LocalDateTime.parse(cardData.getEndTime(), DateTimeFormatter.ISO_DATE_TIME);
+
+            invalidatePendingReservation(previousConfirmToken);
+            cleanupExpiredPendingReservations();
+            String confirmToken = UUID.randomUUID().toString().replace("-", "");
+            pendingReservations.put(confirmToken, new PendingReservation(
+                    currentUserId.get(),
+                    cardData.getSpotId(),
+                    startTime,
+                    endTime,
+                    LocalDateTime.now(clock)));
+
+            return AgentChatResponse.of(
+                    "reservation_pending",
+                    buildPendingReservationMessage(cardData),
+                    toPendingReservationMap(confirmToken, cardData));
+        } catch (Exception e) {
+            log.warn("pending_reservation_prepare_failed | requestId={} | spotId={} | message={}",
+                    currentRequestId.get(), cardData.getSpotId(), e.getMessage());
+            return AgentChatResponse.of("recommend_booking", buildPendingReservationMessage(cardData), toRecommendBookingMap(cardData));
+        }
+    }
+
+    private RecommendBookingCardData normalizeRecommendBookingCardData(RecommendBookingCardData cardData,
+                                                                       String requestedStationName) {
+        if (cardData == null) {
+            return null;
+        }
+        return RecommendBookingCardData.builder()
+                .stationId(cardData.getStationId())
+                .stationName(cardData.getStationName())
+                .spotId(cardData.getSpotId())
+                .spotCode(cardData.getSpotCode())
+                .chargingType(cardData.getChargingType())
+                .startTime(cardData.getStartTime())
+                .endTime(cardData.getEndTime())
+                .pricePerHour(cardData.getPricePerHour())
+                .reason(buildRecommendationReason(
+                        requestedStationName,
+                        cardData.getStationName(),
+                        cardData.getChargingType()))
+                .build();
+    }
+
+    private String buildPendingReservationMessage(RecommendBookingCardData cardData) {
+        StringBuilder message = new StringBuilder("我已为你找到");
+        if (cardData.getChargingType() != null && !cardData.getChargingType().isBlank()) {
+            message.append(cardData.getChargingType());
+        } else {
+            message.append("符合条件的");
+        }
+        message.append("车位");
+        if (cardData.getStationName() != null && !cardData.getStationName().isBlank()) {
+            message.append("，站点是 ").append(cardData.getStationName());
+        }
+        message.append("。请确认预约信息，如需修改时段或车型偏好也可以直接告诉我。");
+        return message.toString();
     }
 
     private Map<String, Object> toPendingReservationMap(String confirmToken, RecommendBookingCardData data) {
@@ -1325,6 +1785,52 @@ public class AgentService {
         return null;
     }
 
+    private SpotSelection resolveSpotSelection(String userQuestion, List<AgentHistoryMessage> history) {
+        SpotContext context = findLatestSpotContext(history);
+        if (context == null || context.spots().isEmpty()) {
+            return null;
+        }
+
+        String normalized = normalizeQuestion(userQuestion);
+        boolean mentionsSpot = containsAny(normalized, List.of(
+                "车位", "桩位", "充电位", "停车位", "这个桩", "这个位", "就这个", "它"));
+        Integer ordinal = extractOrdinal(userQuestion);
+
+        ParsedSpot selectedSpot = null;
+        if (ordinal != null
+                && mentionsSpot
+                && ordinal > 0
+                && ordinal <= context.spots().size()) {
+            selectedSpot = context.spots().get(ordinal - 1);
+        } else if (context.spots().size() == 1
+                && containsAny(normalized, List.of(
+                "这个车位", "该车位", "就这个车位", "这个桩位", "该桩位",
+                "这个充电位", "就这个", "这个桩", "这个位", "它"))) {
+            selectedSpot = context.spots().get(0);
+        }
+
+        if (selectedSpot == null || parkingSpotService == null) {
+            return null;
+        }
+
+        ParsedSpot resolvedSpot = selectedSpot;
+        return parkingSpotService.findById(resolvedSpot.id())
+                .map(spot -> {
+                    Long stationId = null;
+                    String stationName = null;
+                    String chargingType = null;
+                    if (spot.getPile() != null) {
+                        chargingType = displayChargingType(spot.getPile().getPileType());
+                        if (spot.getPile().getStation() != null) {
+                            stationId = spot.getPile().getStation().getId();
+                            stationName = spot.getPile().getStation().getName();
+                        }
+                    }
+                    return new SpotSelection(resolvedSpot.id(), resolvedSpot.code(), stationId, stationName, chargingType);
+                })
+                .orElse(null);
+    }
+
     private String resolveStationName(Long stationId, List<AgentHistoryMessage> history) {
         if (stationId == null) {
             return null;
@@ -1342,6 +1848,35 @@ public class AgentService {
         return stationService.findById(stationId)
                 .map(ChargingStationDTO::getName)
                 .orElse(null);
+    }
+
+    private SpotContext findLatestSpotContext(List<AgentHistoryMessage> history) {
+        if (history == null || history.isEmpty()) {
+            return null;
+        }
+
+        for (int i = history.size() - 1; i >= 0; i--) {
+            AgentHistoryMessage message = history.get(i);
+            if (!"assistant".equals(message.getRole()) || message.getContent() == null) {
+                continue;
+            }
+            String content = message.getContent();
+            if (!content.contains("[可用车位]")) {
+                continue;
+            }
+
+            List<ParsedSpot> spots = new ArrayList<>();
+            Matcher matcher = AVAILABLE_SPOT_LIST_ITEM_PATTERN.matcher(content);
+            while (matcher.find()) {
+                spots.add(new ParsedSpot(
+                        Long.parseLong(matcher.group(2)),
+                        matcher.group(3).trim()));
+            }
+            if (!spots.isEmpty()) {
+                return new SpotContext(spots);
+            }
+        }
+        return null;
     }
 
     private StationContext findLatestStationContext(List<AgentHistoryMessage> history) {
@@ -1396,16 +1931,28 @@ public class AgentService {
 
             String content = message.getContent();
             if (!content.contains("我已经锁定")) {
+                StationSelection llmSelection = resolveStationSelectionFromPrompt(content, history, i);
+                if (llmSelection != null) {
+                    return llmSelection;
+                }
                 continue;
             }
 
             Integer ordinal = extractOrdinal(content);
             if (ordinal == null) {
+                StationSelection llmSelection = resolveStationSelectionFromPrompt(content, history, i);
+                if (llmSelection != null) {
+                    return llmSelection;
+                }
                 continue;
             }
 
             StationContext earlierContext = findLatestStationContext(history, i);
             if (earlierContext == null || earlierContext.stations().size() < ordinal) {
+                StationSelection llmSelection = resolveStationSelectionFromPrompt(content, history, i);
+                if (llmSelection != null) {
+                    return llmSelection;
+                }
                 continue;
             }
 
@@ -1413,6 +1960,40 @@ public class AgentService {
             return new StationSelection(station.id(), station.name());
         }
         return null;
+    }
+
+    private StationSelection resolveStationSelectionFromPrompt(String content,
+                                                               List<AgentHistoryMessage> history,
+                                                               int currentIndex) {
+        if (content == null || content.isBlank()) {
+            return null;
+        }
+
+        String normalized = normalizeQuestion(content);
+        if (!containsAny(normalized, List.of(
+                "站点id为", "查询可预约的车位", "请告诉我以下信息",
+                "空闲车位信息", "更精准地推荐", "快充或慢充", "预约的时间段"))) {
+            return null;
+        }
+
+        Matcher stationIdMatcher = LOCKED_STATION_ID_PATTERN.matcher(normalized);
+        if (stationIdMatcher.find()) {
+            Long stationId = Long.parseLong(stationIdMatcher.group(1));
+            return new StationSelection(stationId, resolveStationName(stationId, history));
+        }
+
+        Integer ordinal = extractOrdinal(content);
+        if (ordinal == null) {
+            return null;
+        }
+
+        StationContext earlierContext = findLatestStationContext(history, currentIndex);
+        if (earlierContext == null || earlierContext.stations().size() < ordinal) {
+            return null;
+        }
+
+        ParsedStation station = earlierContext.stations().get(ordinal - 1);
+        return new StationSelection(station.id(), station.name());
     }
 
     private PendingReservationContext findLatestPendingReservationContext(List<AgentHistoryMessage> history) {
@@ -1614,6 +2195,11 @@ public class AgentService {
         return normalized;
     }
 
+    private String normalizeReservationChargingType(String chargingType) {
+        String normalized = normalizeChargingType(chargingType);
+        return normalized != null ? normalized : DEFAULT_RESERVATION_CHARGING_TYPE;
+    }
+
     private String displayChargingType(String pileType) {
         return switch (normalizeChargingType(pileType)) {
             case "DC" -> "直流快充";
@@ -1626,6 +2212,8 @@ public class AgentService {
 
     private record ToolRecord(String name, String arguments, String result) {}
 
+    private record CrossStationBookingContext(boolean switchedStation, String requestedStationName) {}
+
     private record SimpleStationQuery(boolean matched, String keyword, String chargingType) {
         private static SimpleStationQuery notMatched() {
             return new SimpleStationQuery(false, null, null);
@@ -1634,9 +2222,9 @@ public class AgentService {
 
     private record PreparsedReservationIntent(boolean matched, Long stationId, String stationName,
                                               LocalDateTime startTime, LocalDateTime endTime,
-                                              String chargingType, String previousConfirmToken) {
+                                              String chargingType, Long spotId, String previousConfirmToken) {
         private static PreparsedReservationIntent notMatched() {
-            return new PreparsedReservationIntent(false, null, null, null, null, null, null);
+            return new PreparsedReservationIntent(false, null, null, null, null, null, null, null);
         }
     }
 
@@ -1650,7 +2238,14 @@ public class AgentService {
 
     private record StationContext(List<ParsedStation> stations) {}
 
+    private record ParsedSpot(Long id, String code) {}
+
+    private record SpotContext(List<ParsedSpot> spots) {}
+
     private record StationSelection(Long stationId, String stationName) {}
+
+    private record SpotSelection(Long spotId, String spotCode, Long stationId, String stationName,
+                                 String chargingType) {}
 
     private record TimeRange(LocalDateTime startTime, LocalDateTime endTime) {}
 
@@ -1889,6 +2484,18 @@ public class AgentService {
                                 "end_time", Map.of("type", "string", "description", "预约结束时间，ISO格式如2026-04-08T16:00:00"),
                                 "charging_type", Map.of("type", "string", "description", "可选，充电类型偏好：快充/慢充/DC/AC")),
                         "required", List.of("station_id", "start_time", "end_time"))));
+
+        tools.add(buildTool("query_available_spots_across_stations",
+                "按推荐顺序跨站点查询指定时间段内可预约的空闲车位。当用户指定的站点没有快充或慢充车位时，先检查该站点，再继续检查后续推荐站点，直到找到符合条件的车位或候选站点全部查完。适用于用户说'如果这个站没有快充/慢充就换下一个'、'没有就顺延推荐'等场景",
+                Map.of("type", "object", "properties",
+                        Map.of(
+                                "station_id", Map.of("type", "integer", "description", "可选，用户优先指定的充电站ID；提供后会优先检查该站点"),
+                                "start_time", Map.of("type", "string", "description", "预约开始时间，ISO格式如2026-04-08T15:00:00"),
+                                "end_time", Map.of("type", "string", "description", "预约结束时间，ISO格式如2026-04-08T16:00:00"),
+                                "charging_type", Map.of("type", "string", "description", "可选，充电类型偏好：快充/慢充/DC/AC"),
+                                "keyword", Map.of("type", "string", "description", "可选，站点关键词或城市关键词，用于限定候选站点"),
+                                "max_stations", Map.of("type", "integer", "description", "可选，最多检查的候选站点数量，默认10")),
+                        "required", List.of("start_time", "end_time"))));
 
         tools.add(buildTool("recommend_booking",
                 "推荐预约方案：校验参数并返回推荐的预约信息（站点、车位、时间、价格），不创建预约。系统会引导用户到确认页面完成预约",

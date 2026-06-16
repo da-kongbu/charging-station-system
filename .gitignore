@@ -38,3 +38,23 @@ src/main/resources/application-secret.yml
 interview_questions*.md
 *.md
 !README.md
+.gstack/
+
+# 毕设文档与材料（非源码，不入库）
+.claude/
+docs/
+ppt_demo/
+smartcharge/
+smartcharge.zip
+1.html
+1777793655752_download.png
+backend-api-list.txt
+shujuku.sql
+scripts/draw_thesis_figs.py
+论文章节/
+# 论文 / 答辩 / 材料文件（二进制文档，绝不入库）
+*.doc
+*.docx
+*.pdf
+*.pptx
+*.zip

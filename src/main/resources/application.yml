@@ -37,7 +37,7 @@ spring:
 
 # JWT 配置
 jwt:
-  secret: ChargingStationSystemSecretKey2024VeryLongSecretKeyForJWTSigning
+  secret: ${JWT_SECRET:dev-only-secret-please-change-this-to-a-long-random-string}
   expiration: 86400000  # 24 hours in milliseconds
 
 # Swagger/OpenAPI 配置
@@ -62,4 +62,4 @@ ai:
     model: "deepseek-ai/DeepSeek-V3"
     agent-timeout-seconds: 60 # 预约补问等场景最多等待 60 秒，超时后走后端业务兜底
     embedding-url: "https://api.siliconflow.cn/v1/embeddings"
-    embedding-model: "BAAI/bge-m3"
+    embedding-model: "Qwen/Qwen3-Embedding-8B"

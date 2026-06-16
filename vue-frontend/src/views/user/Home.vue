@@ -246,7 +246,7 @@ async function initMapWithMarkers() {
     <div>
     <!-- Hero -->
     <div class="hero">
-      <v-container class="text-center">
+      <v-container class="text-center hero-content">
         <h1 class="text-white text-h4 text-md-h3 font-weight-bold mb-2">找到您身边的充电站</h1>
         <p class="text-white text-body-1 mb-6" style="opacity: 0.9;">便捷预约，轻松充电</p>
         <v-responsive max-width="600" class="mx-auto">
@@ -400,8 +400,28 @@ async function initMapWithMarkers() {
 
 <style scoped>
 .hero {
-  background: linear-gradient(135deg, #00b894 0%, #0984e3 100%);
-  padding: 80px 0;
+  position: relative;
+  overflow: hidden;
+  padding: 96px 0;
+  background:
+    linear-gradient(135deg, rgba(0, 184, 148, 0.72) 0%, rgba(9, 132, 227, 0.76) 100%),
+    url('/hero-bg.png');
+  background-position: center 72%;
+  background-repeat: no-repeat;
+  background-size: cover;
+}
+
+.hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at center, rgba(255, 255, 255, 0.18) 0%, rgba(255, 255, 255, 0.05) 34%, rgba(255, 255, 255, 0) 64%);
+  pointer-events: none;
+}
+
+.hero-content {
+  position: relative;
+  z-index: 1;
 }
 
 .map-container {
@@ -435,5 +455,12 @@ async function initMapWithMarkers() {
 
 .station-footer {
   min-height: 20px;
+}
+
+@media (max-width: 600px) {
+  .hero {
+    padding: 72px 0;
+    background-position: center 64%;
+  }
 }
 </style>

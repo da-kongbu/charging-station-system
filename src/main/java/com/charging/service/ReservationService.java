@@ -180,7 +180,11 @@ public class ReservationService {
                     + reservation.getStartTime().minusMinutes(5).toLocalTime() + " 开始签到");
         }
 
-        if (now.isAfter(reservation.getEndTime())) {
+        LocalDateTime latestCheckIn = reservation.getEndTime().isBefore(reservation.getStartTime().plusMinutes(30))
+                ? reservation.getEndTime()
+                : reservation.getStartTime().plusMinutes(30);
+
+        if (!now.isBefore(latestCheckIn)) {
             throw new RuntimeException("预约已过期，无法签到");
         }
 
